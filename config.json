@@ -1,0 +1,99 @@
+{
+    "experiment_name": "experiment",
+    "paths": {
+        "trained_model_path": "C:\\Users\\tkddesai\\surfdrive\\Main drive\\Data\\Stanford_UDDS\\Results\\lambda_exp\\two_encoder_le1_lc1_Convo_053010_102005_200201_D10_3E2000_V20_1000_200_Bcycle",
+        "data_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Cells",
+        "model_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Model",
+        "tensorboard_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Tensorboard",
+        "result_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Results"
+    },
+    "cells": {
+        "train_cells": ["V4", "W4", "W10"],
+        "test_cells": ["W5"]
+    },
+    "signals": {
+        "I_full_vec_M1_NMC25degC": {
+            "name": "Current",
+            "max_value": 1.4,
+            "min_value": -4.9,
+            "unit": "A"
+        },
+        "V_full_vec_M1_NMC25degC": {
+            "name": "Sensor Voltage",
+            "max_value": 4.5,
+            "min_value": 3.0,
+            "unit": "V"
+        },
+        "Step_Index_full_vec_M1_NMC25degC": {
+            "name": "Cycle Step",
+            "max_value": 14,
+            "min_value": 0,
+            "unit": ""
+        },
+        "ch_cap_full_vec_M1_NMC25degC": {
+            "name": "Charging Capacity (SOC)",
+            "max_value": 1.0,
+            "min_value": 0.0,
+            "unit": "Ah"
+        },
+        "dis_cap_full_vec_M1_NMC25degC": {
+            "name": "Discharge Capacity (DOD)",
+            "max_value": 4.8,
+            "min_value": 0.8,
+            "unit": "Ah"
+        },
+        "t_full_vec_M1_NMC25degC": {
+            "name": "Time",
+            "max_value": 0,
+            "min_value": 0,
+            "unit": "s"
+        }
+    },
+    "model_config": {
+        "encoder_input_signals": ["Current", "Sensor Voltage"],
+        "decoder_input_signals": ["Current"],
+        "signals_to_scale": ["Current", "Sensor Voltage"],
+        "output_signal": ["Sensor Voltage"],
+        "sampling_frequency": 1,
+        "nominal_capacity": 4.85,
+        "trained_model": false
+    },
+    "signals_to_plot": {
+        "Current": {
+            "descaling": true
+        }
+    },
+    "model_specifications": {
+        "epoch": 10,
+        "batch_size": 1024,
+        "val_train_split_ratio": 0.001,
+        "encoder_input_seq": 50,
+        "decoder_input_seq": 100,
+        "second_stage_encoder_max_input_seq": 200,
+        "skipping_seq": 1,
+        "early_stopping_patience": 400,
+        "learning_rate": 0.001,
+        "decay_steps": 10,
+        "decay_rate": 1.0,
+        "weights_logging_freq_epochs": 20,
+        "soc_min_max": {
+            "min": 0,
+            "max": 1
+        },
+        "cap_min_max": {
+            "min": 0.1,
+            "max": 1
+        },
+        "initial_soc": 0.8,
+        "end_soc": 0.2,
+        "lambda_params": {
+            "prediction": 1,
+            "soc_inequality": 1,
+            "soc_inequality_decoder": 1,
+            "soc_dynamics": 1000,
+            "hi_inequality": 1,
+            "hi_same_in_cycle": 1,
+            "hi_dynamics": 0
+        }
+    }
+}
