@@ -1,15 +1,15 @@
 {
     "experiment_name": "experiment",
     "paths": {
-        "trained_model_path": "C:\\Users\\tkddesai\\surfdrive\\Main drive\\Data\\Stanford_UDDS\\Results\\lambda_exp\\two_encoder_le1_lc1_Convo_053010_102005_200201_D10_3E2000_V20_1000_200_Bcycle",
-        "data_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Cells",
-        "model_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Model",
-        "tensorboard_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Tensorboard",
-        "result_path": "/Users/tkddesai/surfdrive/Main drive/Data/Stanford_UDDS/Results"
+        "trained_model": "",
+        "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
+        "model": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Model",
+        "tensorboard": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Tensorboard",
+        "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["V4", "W4", "W10"],
-        "test_cells": ["W5"]
+        "train_cells": ["RW9", "RW10"],
+        "test_cells": ["RW11", "RW12"]
     },
     "signals": {
         "I_full_vec_M1_NMC25degC": {
@@ -85,15 +85,6 @@
             "max": 1
         },
         "initial_soc": 0.8,
-        "end_soc": 0.2,
-        "lambda_params": {
-            "prediction": 1,
-            "soc_inequality": 1,
-            "soc_inequality_decoder": 1,
-            "soc_dynamics": 1000,
-            "hi_inequality": 1,
-            "hi_same_in_cycle": 1,
-            "hi_dynamics": 0
-        }
+        "end_soc": 0.2
     }
 }
