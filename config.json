@@ -8,8 +8,8 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW9", "RW10"],
-        "test_cells": ["RW11", "RW12"]
+        "train_cells": ["RW9"],
+        "test_cells": ["RW11"]
     },
     "signals": {
         "I_full_vec_M1_NMC25degC": {
@@ -86,5 +86,29 @@
         },
         "initial_soc": 0.8,
         "end_soc": 0.2
+    },
+    "time_bins": {
+        "voltage_bins": [
+            [3, 4],
+            [4, 5],
+            [5, 6]
+        ],
+        "current_bins": {
+            "positive": [
+                [0, 1],
+                [1, 2],
+                [2, 3]
+            ],
+            "negative": [
+                [-3, -2],
+                [-2, -1],
+                [-1, 0]
+            ]
+        },
+        "temperature_bins": [
+            [30, 35],
+            [35, 40],
+            [40, 45]
+        ]
     }
 }
