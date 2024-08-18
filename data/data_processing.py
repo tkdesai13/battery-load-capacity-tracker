@@ -97,7 +97,7 @@ class DataProcessor:
 
         return preprocessed_data
 
-    def _preprocess_cell_data(self, cell_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _preprocess_cell_data(self, cell_data: Dict[str, Any]) -> dict[int, dict[Any, Any]]:
         """
         Preprocess the data for a single cell.
 
@@ -107,23 +107,49 @@ class DataProcessor:
         ground_truth_cycle_counter = 0
         processed_data_stepwise = {}
 
+        # Initialize a matrix to accumulate time spent and transitions
+        accumulated_time_bins = [[[0 for _ in range(2)] for _ in range(3)] for _ in range(3)]
+        accumulated_transitions = np.zeros((3, 3, 2, 3, 3, 2))
+
         for step_counter, step_data in enumerate(cell_data['step']):
+            # Initialize the ground_truth_cycle_counter key if not already initialized
+            if ground_truth_cycle_counter not in processed_data_stepwise:
+                processed_data_stepwise[ground_truth_cycle_counter] = {}
 
-            processed_data_stepwise[ground_truth_cycle_counter][step_counter] = self._process_load_pattern_each_step(step_data)
+            # Process the load pattern for each step and store it
+            processed_data = self._process_load_pattern_each_step(step_data)
 
+            # Add the processed time_bins to the accumulated matrix
+            accumulated_time_bins = self._add_time_bins(accumulated_time_bins, processed_data["time_bins"])
+
+            # Update transition matrix
+            accumulated_transitions = self._update_transition_matrix(accumulated_transitions, processed_data)
+
+            # Store the processed data in the dictionary
+            processed_data_stepwise[ground_truth_cycle_counter][step_counter] = processed_data
+
+            # Check for the reference discharge step to process capacity data
             if step_data['comment'] == 'reference discharge':
-                processed_data_stepwise[ground_truth_cycle_counter]['ground_truth_cycle'] = self._process_reference_capacity_step(step_data)
+                processed_data_stepwise[ground_truth_cycle_counter][
+                    'ground_truth_cycle'] = self._process_reference_capacity_step(step_data)
+                processed_data_stepwise[ground_truth_cycle_counter]['accumulated_time_bins'] = accumulated_time_bins
+                processed_data_stepwise[ground_truth_cycle_counter]['accumulated_transitions'] = accumulated_transitions
+
+                # Reset the matrices for the next cycle
+                accumulated_time_bins = [[[0 for _ in range(2)] for _ in range(3)] for _ in range(3)]
+                accumulated_transitions = np.zeros((3, 3, 2, 3, 3, 2))
+
                 ground_truth_cycle_counter += 1
 
-        return cell_data
+        return processed_data_stepwise
 
     def _process_load_pattern_each_step(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process the load pattern data by calculating the time spent in each bin
-        based on voltage, current (positive/negative), and temperature.
+        and the transitions between bins based on voltage, current (positive/negative), and temperature.
 
         :param step_data: The data for a single step.
-        :return: The processed load pattern data with time spent in each bin.
+        :return: The processed load pattern data with time spent in each bin and transitions.
         """
         # Access the bins from the configuration
         voltage_bins = self.config["time_bins"]["voltage_bins"]
@@ -134,41 +160,117 @@ class DataProcessor:
         # Initialize the 3x3x2 matrix to store the time spent in each bin
         time_bins = [[[0 for _ in range(2)] for _ in range(3)] for _ in range(3)]
 
+        # Initialize transition list to store bin indices for transitions
+        transitions = []
+        previous_bin = None
+
         # Extract the relevant data arrays
         voltage_data = step_data["voltage"]
         current_data = step_data["current"]
         temperature_data = step_data["temperature"]
-        time_data = step_data["time"]  # Assuming this is the cumulative time in seconds
+        time_data = step_data["relativeTime"]  # This is the relative step time in seconds
 
-        # Calculate the time spent in each bin
+        # Calculate the time spent in each bin and record transitions
         for i in range(1, len(voltage_data)):
             voltage = voltage_data[i]
             current = current_data[i]
             temperature = temperature_data[i]
-            time_spent = time_data[i] - time_data[i - 1]
+            time_spent = (time_data[i] - time_data[i - 1]) / 3600.0  # Convert time from seconds to hours
 
             # Determine which bin the data point falls into
+            voltage_bin, current_bin, polarity_bin, temperature_bin = None, None, None, None
+
             for v_idx, (v_min, v_max) in enumerate(voltage_bins):
                 if v_min <= voltage < v_max:
-                    if current >= 0:
-                        for c_idx, (c_min, c_max) in enumerate(current_bins_positive):
-                            if c_min <= current < c_max:
-                                for t_idx, (t_min, t_max) in enumerate(temperature_bins):
-                                    if t_min <= temperature < t_max:
-                                        time_bins[v_idx][c_idx][0] += time_spent
-                    else:
-                        for c_idx, (c_min, c_max) in enumerate(current_bins_negative):
-                            if c_min <= current < c_max:
-                                for t_idx, (t_min, t_max) in enumerate(temperature_bins):
-                                    if t_min <= temperature < t_max:
-                                        time_bins[v_idx][c_idx][1] += time_spent
+                    voltage_bin = v_idx
+                    break
+
+            if current >= 0:
+                polarity_bin = 0
+                for c_idx, (c_min, c_max) in enumerate(current_bins_positive):
+                    if c_min <= current < c_max:
+                        current_bin = c_idx
+                        break
+            else:
+                polarity_bin = 1
+                for c_idx, (c_min, c_max) in enumerate(current_bins_negative):
+                    if c_min <= current < c_max:
+                        current_bin = c_idx
+                        break
+
+            for t_idx, (t_min, t_max) in enumerate(temperature_bins):
+                if t_min <= temperature < t_max:
+                    temperature_bin = t_idx
+                    break
+
+            # If the bin indices were determined, update the time spent in the bin
+            if voltage_bin is not None and current_bin is not None and temperature_bin is not None:
+                time_bins[voltage_bin][current_bin][polarity_bin] += time_spent
+
+                current_bin_indices = (voltage_bin, current_bin, polarity_bin, temperature_bin)
+                transitions.append(current_bin_indices)
+
+                # Update the transition matrix if there's a previous bin recorded
+                if previous_bin is not None:
+                    self._update_transition_matrix(self.accumulated_transitions, previous_bin, current_bin_indices)
+
+                # Set the current bin as the previous bin for the next iteration
+                previous_bin = current_bin_indices
 
         # Store the processed data
         processed_data = {
-            "time_bins": time_bins
+            "time_bins": time_bins,
+            "transitions": transitions  # Store transitions if needed for further analysis
         }
 
         return processed_data
+
+    def _add_time_bins(self, accumulated_time_bins: list, current_time_bins: list) -> list:
+        """
+        Add the time spent in the current step's bins to the accumulated time bins.
+
+        :param accumulated_time_bins: The current accumulated time bins.
+        :param current_time_bins: The time bins for the current step.
+        :return: The updated accumulated time bins.
+        """
+        for v_idx in range(3):
+            for c_idx in range(3):
+                for polarity in range(2):
+                    accumulated_time_bins[v_idx][c_idx][polarity] += current_time_bins[v_idx][c_idx][polarity]
+        return accumulated_time_bins
+
+    def _update_transition_matrix(self, transition_matrix: np.ndarray, processed_data: Dict[str, Any]) -> np.ndarray:
+        """
+        Update the transition matrix with transitions from the previous bin to the current bin.
+
+        :param transition_matrix: The current transition matrix.
+        :param processed_data: The processed data for the current step, including bin indices.
+        :return: The updated transition matrix.
+        """
+        previous_bin = None
+
+        for i in range(1, len(processed_data["time_bins"])):
+            current_bin = self._get_bin_indices(processed_data, i)
+            if previous_bin:
+                transition_matrix[previous_bin][current_bin] += 1
+            previous_bin = current_bin
+
+        return transition_matrix
+
+    def _get_bin_indices(self, processed_data: Dict[str, Any], index: int) -> tuple:
+        """
+        Get the indices of the bin where the current data point falls.
+
+        :param processed_data: The processed data for the current step.
+        :param index: The index of the current data point.
+        :return: A tuple containing the bin indices (voltage, current, polarity, temperature).
+        """
+        voltage_bin = processed_data["voltage_bin"][index]
+        current_bin = processed_data["current_bin"][index]
+        polarity = 0 if processed_data["current"][index] >= 0 else 1
+        temperature_bin = processed_data["temperature_bin"][index]
+
+        return (voltage_bin, current_bin, polarity, temperature_bin)
 
     def _process_reference_capacity_step(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
         """
