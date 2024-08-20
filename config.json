@@ -8,9 +8,10 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW9", "RW5"],
+        "train_cells": ["RW9", "RW10"],
         "test_cells": ["RW11"]
     },
+    "nominal_capacity":2,
     "signals": {
         "I_full_vec_M1_NMC25degC": {
             "name": "Current",
@@ -55,7 +56,6 @@
         "signals_to_scale": ["Current", "Sensor Voltage"],
         "output_signal": ["Sensor Voltage"],
         "sampling_frequency": 1,
-        "nominal_capacity": 4.85,
         "trained_model": false
     },
     "signals_to_plot": {
@@ -66,7 +66,7 @@
     "model_specifications": {
         "epoch": 10,
         "batch_size": 1024,
-        "val_train_split_ratio": 0.001,
+        "val_train_split_ratio": 0.2,
         "encoder_input_seq": 50,
         "decoder_input_seq": 100,
         "second_stage_encoder_max_input_seq": 200,

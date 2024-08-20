@@ -1,9 +1,10 @@
 import os
+import itertools
 from datetime import datetime
 import scipy.io
 import numpy as np
 from collections import defaultdict
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 
 def matstruct_to_dict(matstruct: Any) -> dict:
@@ -128,7 +129,7 @@ class DataProcessor:
             if ground_truth_cycle_counter not in processed_data_stepwise:
                 processed_data_stepwise[ground_truth_cycle_counter] = {}
 
-            # Process the load pattern for each step and store it
+            # Process the load pattern for each step and store it in time bins and transition matrix(jumps among bins)
             processed_data = self._process_load_pattern_each_step(step_data)
 
             # Add the processed time_bins to the accumulated dictionary
@@ -167,7 +168,7 @@ class DataProcessor:
         voltage_data = step_data["voltage"]
         current_data = step_data["current"]
         temperature_data = step_data["temperature"]
-        time_data = step_data["relativeTime"]  # This is the relative step time in seconds
+        time_data = step_data["relativeTime"]  # This is the relative step time in seconds starting from 0 for each step
 
         # Bin the data using the vectorized approach
         time_bins, transitions = self.bin_battery_data_vectorized(voltage_data, current_data, temperature_data, time_data)
@@ -206,9 +207,16 @@ class DataProcessor:
         combined_indices = np.stack((v_indices, c_indices, t_indices), axis=-1)
         time_diffs = np.diff(time)
 
+        # Initialize time_bins with all possible combinations of bins
         time_bins = defaultdict(float)
+        for v_bin, c_bin, t_bin in itertools.product(range(1, len(voltage_bins) + 1),
+                                                     range(1, len(current_bins) + 1),
+                                                     range(1, len(temperature_bins) + 1)):
+            time_bins[(v_bin, c_bin, t_bin)] = 0.0
+
+        # Calculate time spent in each bin
         for idx, t in zip(combined_indices[1:], time_diffs):
-            time_bins[tuple(idx)] += t
+            time_bins[tuple(idx)] += t / 3600  # Convert seconds to hours
 
         transitions = defaultdict(int)
         prev_indices = combined_indices[:-1]
@@ -272,3 +280,111 @@ class DataProcessor:
         }
 
         return processed_data
+
+    def prepare_features_target_variables(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict:
+        """
+        Prepare the data for training and testing.
+
+        :param preprocessed_data: The preprocessed data structured as a dictionary.
+        :return: A dictionary containing the training and testing data, with features and delta_Q as the target variables.
+        """
+
+        train_test_data = {}
+
+        for cell_type, cells in preprocessed_data.items():
+            train_test_data[cell_type] = {}
+
+            for cell_name, cell_data in cells.items():
+                print(f"Preparing features and target variable for {cell_type}/{cell_name}")
+
+                # Initialize the dictionary for this cell_name
+                train_test_data[cell_type][cell_name] = {"features": [], "target": []}
+
+                # Extract the features for each cycle
+                features = []
+                for cycle_no, cycle_data in cell_data.items():
+                    if 'accumulated_time_bins' in cycle_data:
+                        accumulated_time_bins = list(cycle_data['accumulated_time_bins'].values())
+                        features.append(accumulated_time_bins)
+                    else:
+                        print(
+                            f"Warning: 'accumulated_time_bins' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
+
+                # Calculate delta_Q for target variable
+                delta_q = []
+                for cycle_no in cell_data.keys():
+                    if cycle_no == 1:
+                        # First cycle delta_Q is based on nominal capacity
+                        if 'ground_truth_cycle' in cell_data[cycle_no]:
+                            initial_capacity = cell_data[cycle_no]['ground_truth_cycle']['capacity']
+                            delta_q.append(initial_capacity - self.config['nominal_capacity'])
+                        else:
+                            print(
+                                f"Warning: 'ground_truth_cycle' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
+                    else:
+                        # Subsequent delta_Q based on difference with previous cycle's capacity
+                        if 'ground_truth_cycle' in cell_data[cycle_no] and 'ground_truth_cycle' in cell_data[cycle_no - 1]:
+                            current_capacity = cell_data[cycle_no]['ground_truth_cycle']['capacity']
+                            previous_capacity = cell_data[cycle_no - 1]['ground_truth_cycle']['capacity']
+                            delta_q.append(current_capacity - previous_capacity)
+                        else:
+                            print(
+                                f"Warning: 'ground_truth_cycle' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
+
+                # Store the features and target variables in the dictionary
+                train_test_data[cell_type][cell_name]["features"] = features
+                train_test_data[cell_type][cell_name]["target"] = delta_q
+
+        # Returning the structured data for training and testing
+        return train_test_data
+
+    def shuffle_and_split_data(self, train_test_data: Dict[str, Dict[str, Dict[str, Any]]]) -> (
+            Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]):
+        """
+        Shuffle the training data by combining all training cells together,
+        and return the shuffled training data, validation data, and unaltered testing data.
+
+        :param train_test_data: The training and testing data structured by cell type and cell name.
+        :return: A tuple containing the training data, validation data, and unshuffled testing data.
+        """
+
+        split_data = {
+            "train_cells": {
+                "features": [],
+                "target": []
+            },
+            "validation_cells": {
+                "features": [],
+                "target": []
+            },
+            "test_cells": {}
+        }
+
+        # Combine and shuffle training data
+        combined_features = []
+        combined_target = []
+
+        for cell_name, data in train_test_data["train_cells"].items():
+            combined_features.extend(data["features"])
+            combined_target.extend(data["target"])
+
+        # Shuffle the combined features and targets together
+        combined = list(zip(combined_features, combined_target))
+        np.random.shuffle(combined)
+        shuffled_features, shuffled_target = zip(*combined)
+
+        # Calculate the split index for validation
+        val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
+        split_index = int(len(shuffled_features) * (1 - val_split_ratio))
+
+        # Split the data into training and validation sets
+        split_data["train_cells"]["features"] = list(shuffled_features[:split_index])
+        split_data["train_cells"]["target"] = list(shuffled_target[:split_index])
+        split_data["validation_cells"]["features"] = list(shuffled_features[split_index:])
+        split_data["validation_cells"]["target"] = list(shuffled_target[split_index:])
+
+        # Retain test data without shuffling
+        split_data["test_cells"] = train_test_data["test_cells"]
+
+        return split_data
+

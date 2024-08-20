@@ -5,6 +5,7 @@ import os
 import json
 import warnings
 from data.data_processing import DataProcessor
+from models.model import Model
 
 # Ignore warnings
 warnings.filterwarnings("ignore")
@@ -33,4 +34,24 @@ raw_data = data_processing.load_data()
 
 # Preprocess the data
 data = data_processing.preprocess_data(raw_data)
+
+# prepare the data for training and testing
+train_test_data = data_processing.prepare_features_target_variables(data)
+
+# shuffle and split the data
+shuffled_and_split_data = data_processing.shuffle_and_split_data(train_test_data)
+
+# Initialize the Model class
+model = Model(config=config)
+
+# Train the model
+loss, mae, mse = model.run(train_data=shuffled_and_split_data['train_cells'],
+                           val_data=shuffled_and_split_data['validation_cells'],
+                           test_data=shuffled_and_split_data['test_cells'])
+
+# Print evaluation metrics
+print(f"Loss: {loss}")
+print(f"Mean Absolute Error: {mae}")
+print(f"Mean Squared Error: {mse}")
+
 
