@@ -8,7 +8,8 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW9", "RW10"],
+        "train_cells": ["RW9", "RW10", "RW3", "RW4", "RW1", "RW2", "RW25", "RW26", "RW17", "RW18", "RW21", "RW22", "RW13", "RW14",
+        "RW12", "RW5", "RW6", "RW7", "RW8", "RW27", "RW28", "RW19", "RW20", "RW23", "RW24", "RW15", "RW16"],
         "test_cells": ["RW11"]
     },
     "nominal_capacity":2,
@@ -64,7 +65,7 @@
         }
     },
     "model_specifications": {
-        "epoch": 10,
+        "epochs": 100,
         "batch_size": 1024,
         "val_train_split_ratio": 0.2,
         "encoder_input_seq": 50,

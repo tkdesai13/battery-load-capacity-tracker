@@ -1,3 +1,6 @@
+# Description: This file contains the DataProcessor class, which is responsible for loading, preprocessing, and
+# structuring the data for training and testing the model.
+
 import os
 import itertools
 from datetime import datetime
@@ -119,6 +122,10 @@ class DataProcessor:
 
         for step_counter, step_data in enumerate(cell_data['step']):
 
+            # temporary break for testing
+            # if step_counter >= 10000:
+            #     break
+
             # Skip this step if the time data has only one value
             relative_time = step_data['relativeTime']
             if isinstance(relative_time, (float, int)) or (isinstance(relative_time, list) and len(relative_time) <= 1):
@@ -181,6 +188,7 @@ class DataProcessor:
 
         return processed_data
 
+
     def bin_battery_data_vectorized(self, voltage, current, temperature, time):
         """
         Bin the battery data and calculate the time spent in each bin and transitions between bins.
@@ -198,7 +206,10 @@ class DataProcessor:
         temperature_bins = np.array(self.config['time_bins']['temperature_bins'])
 
         def digitize_data(data, bins):
-            return np.digitize(data, bins[:, 1]) + 1
+            # Handle data outside the bins range
+            indices = np.digitize(data, bins[:, 1], right=True)
+            indices = np.clip(indices, 1, len(bins))  # Clip to ensure it stays within valid bin ranges
+            return indices
 
         v_indices = digitize_data(voltage, voltage_bins)
         c_indices = digitize_data(current, current_bins)
@@ -218,11 +229,13 @@ class DataProcessor:
         for idx, t in zip(combined_indices[1:], time_diffs):
             time_bins[tuple(idx)] += t / 3600  # Convert seconds to hours
 
+        # Initialize transition matrix
         transitions = defaultdict(int)
         prev_indices = combined_indices[:-1]
         curr_indices = combined_indices[1:]
         changed_mask = np.any(prev_indices != curr_indices, axis=1)
 
+        # Calculate transitions between bins
         for prev, curr in zip(prev_indices[changed_mask], curr_indices[changed_mask]):
             transitions[tuple(prev), tuple(curr)] += 1
 
