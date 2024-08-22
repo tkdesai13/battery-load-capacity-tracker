@@ -106,6 +106,26 @@ class DataProcessor:
 
         return preprocessed_data
 
+    def load_and_preprocess_data(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load the data from the data path, process and structure it into a dictionary.
+
+        :return: The preprocessed data structured as a dictionary.
+        """
+        data_path = self.config['paths']['data']
+        preprocessed_data = {}
+
+        for cell_type, cells in self.config['cells'].items():
+            preprocessed_data[cell_type] = {}
+            for cell in cells:
+                cell_name = str(cell)
+                print(f"Loading data for {cell_type}/{cell_name}")
+                file_path = self._construct_file_path(data_path, cell_name)
+                raw_cell_data = self._load_and_process_file(file_path)
+                preprocessed_data[cell_type][cell_name] = self._preprocess_cell_data(raw_cell_data)
+
+        return preprocessed_data
+
     def _preprocess_cell_data(self, cell_data: Dict[str, Any]) -> dict[int, dict[Any, Any]]:
         """
         Preprocess the data for a single cell.
@@ -114,54 +134,66 @@ class DataProcessor:
         :return: The preprocessed data for the cell.
         """
         ground_truth_cycle_counter = 1
-        processed_data_stepwise = {}
+        processed_data_cycle_wise = {}
 
         # Initialize a dictionary to accumulate time spent and transitions
         accumulated_time_bins = defaultdict(float)
         accumulated_transitions = defaultdict(int)
 
+        # Accumulated data dictionaries
+        accumulated_data = {
+            "voltage": [],
+            "current": [],
+            "temperature": [],
+            "time": []
+        }
+
         for step_counter, step_data in enumerate(cell_data['step']):
 
-            # temporary break for testing
-            # if step_counter >= 10000:
-            #     break
+            # Accumulate data for each key
+            for key in accumulated_data.keys():
+                value = step_data[key]
+                if isinstance(value, list):
+                    accumulated_data[key].extend(value)
+                else:
+                    accumulated_data[key].append(value)
 
-            # Skip this step if the time data has only one value
-            relative_time = step_data['relativeTime']
-            if isinstance(relative_time, (float, int)) or (isinstance(relative_time, list) and len(relative_time) <= 1):
-                print(f"Skipping step {step_counter + 1} due to insufficient time data.")
-                continue
-
-            # Initialize the ground_truth_cycle_counter key if not already initialized
-            if ground_truth_cycle_counter not in processed_data_stepwise:
-                processed_data_stepwise[ground_truth_cycle_counter] = {}
-
-            # Process the load pattern for each step and store it in time bins and transition matrix(jumps among bins)
-            processed_data = self._process_load_pattern_each_step(step_data)
-
-            # Add the processed time_bins to the accumulated dictionary
-            accumulated_time_bins = self._add_time_bins(accumulated_time_bins, processed_data["time_bins"])
-
-            # Update transition matrix
-            accumulated_transitions = self._update_transition_matrix(accumulated_transitions, processed_data["transitions"])
-
-            # Store the processed data in the dictionary
-            processed_data_stepwise[ground_truth_cycle_counter][step_counter] = processed_data
-
-            # Check for the reference discharge step to process capacity data
+            # Check for the reference discharge step to process the accumulated data
             if step_data['comment'] == 'reference discharge':
-                processed_data_stepwise[ground_truth_cycle_counter][
-                    'ground_truth_cycle'] = self._process_reference_capacity_step(step_data)
-                processed_data_stepwise[ground_truth_cycle_counter]['accumulated_time_bins'] = dict(accumulated_time_bins)
-                processed_data_stepwise[ground_truth_cycle_counter]['accumulated_transitions'] = dict(accumulated_transitions)
+                # Process the accumulated load pattern data
+                processed_data = self._process_load_pattern_each_step(accumulated_data)
 
-                # Reset the dictionaries for the next cycle
+                # Add the processed time_bins to the accumulated dictionary
+                accumulated_time_bins = self._add_time_bins(accumulated_time_bins, processed_data["time_bins"])
+
+                # Update transition matrix
+                accumulated_transitions = self._update_transition_matrix(accumulated_transitions,
+                                                                         processed_data["transitions"])
+
+                # Store the processed data in the dictionary
+                processed_data_cycle_wise[ground_truth_cycle_counter] = processed_data
+                processed_data_cycle_wise[ground_truth_cycle_counter]['accumulated_time_bins'] = dict(
+                    accumulated_time_bins)
+                processed_data_cycle_wise[ground_truth_cycle_counter]['accumulated_transitions'] = dict(
+                    accumulated_transitions)
+
+                # Process the reference capacity step
+                processed_data_cycle_wise[ground_truth_cycle_counter][
+                    'ground_truth_cycle'] = self._process_reference_capacity_step(step_data)
+
+                # Reset the accumulated data and dictionaries for the next cycle
+                accumulated_data = {
+                    "voltage": [],
+                    "current": [],
+                    "temperature": [],
+                    "time": []
+                }
                 accumulated_time_bins = defaultdict(float)
                 accumulated_transitions = defaultdict(int)
 
                 ground_truth_cycle_counter += 1
 
-        return processed_data_stepwise
+        return processed_data_cycle_wise
 
     def _process_load_pattern_each_step(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -175,7 +207,7 @@ class DataProcessor:
         voltage_data = step_data["voltage"]
         current_data = step_data["current"]
         temperature_data = step_data["temperature"]
-        time_data = step_data["relativeTime"]  # This is the relative step time in seconds starting from 0 for each step
+        time_data = step_data["time"]  # Time data in seconds
 
         # Bin the data using the vectorized approach
         time_bins, transitions = self.bin_battery_data_vectorized(voltage_data, current_data, temperature_data, time_data)
@@ -208,7 +240,7 @@ class DataProcessor:
         def digitize_data(data, bins):
             # Handle data outside the bins range
             indices = np.digitize(data, bins[:, 1], right=True)
-            indices = np.clip(indices, 1, len(bins))  # Clip to ensure it stays within valid bin ranges
+            indices = np.clip(indices, 0, len(bins)-1)  # Clip to ensure it stays within valid bin ranges
             return indices
 
         v_indices = digitize_data(voltage, voltage_bins)
@@ -220,9 +252,9 @@ class DataProcessor:
 
         # Initialize time_bins with all possible combinations of bins
         time_bins = defaultdict(float)
-        for v_bin, c_bin, t_bin in itertools.product(range(1, len(voltage_bins) + 1),
-                                                     range(1, len(current_bins) + 1),
-                                                     range(1, len(temperature_bins) + 1)):
+        for v_bin, c_bin, t_bin in itertools.product(range(0, len(voltage_bins)),
+                                                     range(0, len(current_bins)),
+                                                     range(0, len(temperature_bins))):
             time_bins[(v_bin, c_bin, t_bin)] = 0.0
 
         # Calculate time spent in each bin

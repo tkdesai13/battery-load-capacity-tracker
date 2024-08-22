@@ -28,11 +28,8 @@ print("Start: Data extraction and Processing")
 # Initialize the DataProcessor class
 data_processing = DataProcessor(config=config)
 
-# Load the data
-raw_data = data_processing.load_data()
-
-# Preprocess the data
-data = data_processing.preprocess_data(raw_data)
+# Load and preprocess the data cell by cell
+data = data_processing.load_and_preprocess_data()
 
 # prepare the data for training and testing
 train_test_data = data_processing.prepare_features_target_variables(data)
