@@ -2,11 +2,20 @@
 # It reads the configuration file, extracts data, and processes it.
 
 import os
+import numpy as np
+import tensorflow as tf
+import random
 import json
 import warnings
 from data.data_processing import DataProcessor
 from models.model import Model
-from plot.model_evaluation import Plot
+from plot.model_evaluation import ModelEvaluator
+
+# reproducibility
+# Set seeds
+np.random.seed(42)
+tf.random.set_seed(42)
+random.seed(42)
 
 # Ignore warnings
 warnings.filterwarnings("ignore")
@@ -51,8 +60,8 @@ else:
     model.train_model(train_data=shuffled_and_split_data['train_cells'],
                       val_data=shuffled_and_split_data['validation_cells'])
 
-# plot the results
-plot = Plot(config=config)
-plot.evaluate_model(model=model.model, test_data=shuffled_and_split_data['test_cells'])
+# plot the results for training and testing data, save error metrics
+model_evaluator = ModelEvaluator(config=config)
+model_evaluator.evaluate_model(model=model.model, data=train_test_data)
 
 

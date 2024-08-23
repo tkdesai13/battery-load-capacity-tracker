@@ -30,7 +30,7 @@ class Model:
         self.model = tf.keras.models.Sequential([
             tf.keras.layers.Dense(64, activation='relu', input_shape=(input_features_size,)),
             tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1)
+            tf.keras.layers.Dense(1, activation='tanh')
         ])
 
         self.model.compile(optimizer='adam',

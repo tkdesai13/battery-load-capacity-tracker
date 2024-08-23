@@ -343,42 +343,32 @@ class DataProcessor:
                 print(f"Preparing features and target variable for {cell_type}/{cell_name}")
 
                 # Initialize the dictionary for this cell_name
-                train_test_data[cell_type][cell_name] = {"features": [], "target": []}
+                train_test_data[cell_type][cell_name] = {"features": [], "target": [], "ground_truth_cycle": []}
 
-                # Extract the features for each cycle
-                features = []
+                previous_capacity = self.config['nominal_capacity']
+
                 for cycle_no, cycle_data in cell_data.items():
-                    if 'accumulated_time_bins' in cycle_data:
-                        accumulated_time_bins = list(cycle_data['accumulated_time_bins'].values())
-                        features.append(accumulated_time_bins)
-                    else:
-                        print(
-                            f"Warning: 'accumulated_time_bins' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
+                    # Prepare features: accumulated time bins + previous cycle's capacity
+                    accumulated_time_bins = list(cycle_data.get('accumulated_time_bins', {}).values())
+                    features = accumulated_time_bins + [previous_capacity]
 
-                # Calculate delta_Q for target variable
-                delta_q = []
-                for cycle_no in cell_data.keys():
-                    if cycle_no == 1:
-                        # First cycle delta_Q is based on nominal capacity
-                        if 'ground_truth_cycle' in cell_data[cycle_no]:
-                            initial_capacity = cell_data[cycle_no]['ground_truth_cycle']['capacity']
-                            delta_q.append(initial_capacity - self.config['nominal_capacity'])
-                        else:
-                            print(
-                                f"Warning: 'ground_truth_cycle' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
-                    else:
-                        # Subsequent delta_Q based on difference with previous cycle's capacity
-                        if 'ground_truth_cycle' in cell_data[cycle_no] and 'ground_truth_cycle' in cell_data[cycle_no - 1]:
-                            current_capacity = cell_data[cycle_no]['ground_truth_cycle']['capacity']
-                            previous_capacity = cell_data[cycle_no - 1]['ground_truth_cycle']['capacity']
-                            delta_q.append(current_capacity - previous_capacity)
-                        else:
-                            print(
-                                f"Warning: 'ground_truth_cycle' not found for {cell_type}/{cell_name} at cycle {cycle_no}")
+                    # Prepare target: delta_Q
+                    current_capacity = cycle_data.get('ground_truth_cycle', {}).get('capacity', previous_capacity)
+                    current_capacity_date = cycle_data.get('ground_truth_cycle', {}).get('date', None)
+                    delta_q = current_capacity - previous_capacity
 
-                # Store the features and target variables in the dictionary
-                train_test_data[cell_type][cell_name]["features"] = features
-                train_test_data[cell_type][cell_name]["target"] = delta_q
+                    # Store the features and target in the dictionary
+                    train_test_data[cell_type][cell_name]["features"].append(features)
+                    train_test_data[cell_type][cell_name]["target"].append(delta_q)
+
+                    # Store the capacity and date together in ground_truth_cycle
+                    train_test_data[cell_type][cell_name]["ground_truth_cycle"].append({
+                        "capacity": current_capacity,
+                        "date": current_capacity_date
+                    })
+
+                    # Update previous_capacity for the next cycle
+                    previous_capacity = current_capacity
 
         # Returning the structured data for training and testing
         return train_test_data
@@ -396,11 +386,13 @@ class DataProcessor:
         split_data = {
             "train_cells": {
                 "features": [],
-                "target": []
+                "target": [],
+                "ground_truth_cycle": []
             },
             "validation_cells": {
                 "features": [],
-                "target": []
+                "target": [],
+                "ground_truth_cycle": []
             },
             "test_cells": {}
         }
@@ -408,15 +400,17 @@ class DataProcessor:
         # Combine and shuffle training data
         combined_features = []
         combined_target = []
+        combined_ground_truth_capacity = []
 
         for cell_name, data in train_test_data["train_cells"].items():
             combined_features.extend(data["features"])
             combined_target.extend(data["target"])
+            combined_ground_truth_capacity.extend(data["ground_truth_cycle"])
 
         # Shuffle the combined features and targets together
-        combined = list(zip(combined_features, combined_target))
+        combined = list(zip(combined_features, combined_target, combined_ground_truth_capacity))
         np.random.shuffle(combined)
-        shuffled_features, shuffled_target = zip(*combined)
+        shuffled_features, shuffled_target, shuffled_ground_truth_capacity = zip(*combined)
 
         # Calculate the split index for validation
         val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
@@ -425,8 +419,10 @@ class DataProcessor:
         # Split the data into training and validation sets
         split_data["train_cells"]["features"] = list(shuffled_features[:split_index])
         split_data["train_cells"]["target"] = list(shuffled_target[:split_index])
+        split_data["train_cells"]["ground_truth_cycle"] = list(shuffled_ground_truth_capacity[:split_index])
         split_data["validation_cells"]["features"] = list(shuffled_features[split_index:])
         split_data["validation_cells"]["target"] = list(shuffled_target[split_index:])
+        split_data["validation_cells"]["ground_truth_cycle"] = list(shuffled_ground_truth_capacity[split_index:])
 
         # Retain test data without shuffling
         split_data["test_cells"] = train_test_data["test_cells"]
