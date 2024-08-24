@@ -7,7 +7,6 @@ from bokeh.plotting import figure, output_file, save
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource
 
-
 class ModelEvaluator:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -21,8 +20,8 @@ class ModelEvaluator:
         :param model: A trained model.
         :param data: A dictionary containing the features and target of training and testing cells.
         """
-        aggregated_predictions = {'train': {'q_actual': [], 'q_predict': [], 'dates': []},
-                                  'test': {'q_actual': [], 'q_predict': [], 'dates': []}}
+        aggregated_predictions = {'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []},
+                                  'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []}}
 
         for cell_type in ['train_cells', 'test_cells']:
             cells_data = data[cell_type]
@@ -32,9 +31,11 @@ class ModelEvaluator:
                 # Evaluate the model for this single cell
                 predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data)
 
-                # Accumulate all actual, predicted values, and dates
+                # Accumulate all actual, predicted values, dq values, and dates
                 aggregated_predictions[cell_type.split('_')[0]]['q_actual'].extend(predictions[cell]['q_actual'])
                 aggregated_predictions[cell_type.split('_')[0]]['q_predict'].extend(predictions[cell]['q_predict'])
+                aggregated_predictions[cell_type.split('_')[0]]['dq_actual'].extend(predictions[cell]['dq_actual'])
+                aggregated_predictions[cell_type.split('_')[0]]['dq_predict'].extend(predictions[cell]['dq_predict'])
                 aggregated_predictions[cell_type.split('_')[0]]['dates'].extend(predictions[cell]['dates'])
 
                 # Save metrics for the individual cell
@@ -63,29 +64,40 @@ class ModelEvaluator:
         predictions = {}
 
         features = cell_data['features']
+        dq_actual = np.array(cell_data['target'])  # Actual dq values
+        dq_predict = model.predict(features).flatten()  # Predicted dq values
+
         ground_truth = cell_data['ground_truth_cycle']
         nominal_capacity = self.config['nominal_capacity']
-
-        # Predict dq values and calculate q values
-        dq_predict = model.predict(features).flatten()
 
         q_actual = np.array([cycle['capacity'] for cycle in ground_truth])
         dates = [cycle['date'] for cycle in ground_truth]
         q_prev_step = [nominal_capacity] + q_actual[:-1].tolist()
         q_predict = [q_prev + dq_current_predict for q_prev, dq_current_predict in zip(q_prev_step, dq_predict.tolist())]
 
-        # Store predictions, actual values, and dates
+        # Store predictions, actual values, dq values, and dates
         predictions['q_actual'] = q_actual.tolist()
         predictions['q_predict'] = q_predict
+        predictions['dq_actual'] = dq_actual.tolist()
+        predictions['dq_predict'] = dq_predict.tolist()
         predictions['dates'] = [date.isoformat() for date in dates]  # Convert datetime to string for JSON serialization
 
-        # Individual cell metrics (could be stored separately if needed)
+        # Individual cell metrics for q and dq
         cell_metrics = {
-            'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
-            'mae': mean_absolute_error(q_actual, q_predict),
-            'mape': np.mean(np.abs((q_actual - q_predict) / q_actual)) * 100,
-            'r2': r2_score(q_actual, q_predict),
-            'mse': mean_squared_error(q_actual, q_predict)
+            'q_metrics': {
+                'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
+                'mae': mean_absolute_error(q_actual, q_predict),
+                'mape': np.mean(np.abs((q_actual - q_predict) / q_actual)) * 100,
+                'r2': r2_score(q_actual, q_predict),
+                'mse': mean_squared_error(q_actual, q_predict)
+            },
+            'dq_metrics': {
+                'rmse': np.sqrt(mean_squared_error(dq_actual, dq_predict)),
+                'mae': mean_absolute_error(dq_actual, dq_predict),
+                'mape': np.mean(np.abs((dq_actual - dq_predict) / dq_actual)) * 100,
+                'r2': r2_score(dq_actual, dq_predict),
+                'mse': mean_squared_error(dq_actual, dq_predict)
+            }
         }
 
         return predictions, cell_metrics
@@ -94,18 +106,29 @@ class ModelEvaluator:
         """
         Calculate the aggregated metrics for all cells combined.
 
-        :param aggregated_predictions: A dictionary containing combined predictions, actual values, and dates.
+        :param aggregated_predictions: A dictionary containing combined predictions, actual values, dq values, and dates.
         :return: A dictionary containing the aggregated error metrics.
         """
         q_actual = np.array(aggregated_predictions['q_actual'])
         q_predict = np.array(aggregated_predictions['q_predict'])
+        dq_actual = np.array(aggregated_predictions['dq_actual'])
+        dq_predict = np.array(aggregated_predictions['dq_predict'])
 
         metrics = {
-            'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
-            'mae': mean_absolute_error(q_actual, q_predict),
-            'mape': np.mean(np.abs((q_actual - q_predict) / q_actual)) * 100,
-            'r2': r2_score(q_actual, q_predict),
-            'mse': mean_squared_error(q_actual, q_predict)
+            'q_metrics': {
+                'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
+                'mae': mean_absolute_error(q_actual, q_predict),
+                'mape': np.mean(np.abs((q_actual - q_predict) / q_actual)) * 100,
+                'r2': r2_score(q_actual, q_predict),
+                'mse': mean_squared_error(q_actual, q_predict)
+            },
+            'dq_metrics': {
+                'rmse': np.sqrt(mean_squared_error(dq_actual, dq_predict)),
+                'mae': mean_absolute_error(dq_actual, dq_predict),
+                'mape': np.mean(np.abs((dq_actual - dq_predict) / dq_actual)) * 100,
+                'r2': r2_score(dq_actual, dq_predict),
+                'mse': mean_squared_error(dq_actual, dq_predict)
+            }
         }
 
         return metrics
@@ -130,30 +153,48 @@ class ModelEvaluator:
         """
         plots = []
         for cell, cell_predictions in predictions.items():
-            source = ColumnDataSource(data=dict(
+            source_q = ColumnDataSource(data=dict(
                 x=[np.datetime64(date) for date in cell_predictions['dates']],
                 y_actual=cell_predictions['q_actual'],
                 y_predict=cell_predictions['q_predict']
             ))
 
-            p = figure(title=f'Cell {cell} - Predicted vs. Actual Capacity',
-                       x_axis_label='Date',
-                       y_axis_label='Capacity (Ah)',
-                       x_axis_type='datetime',
-                       width=800,
-                       height=400)
+            source_dq = ColumnDataSource(data=dict(
+                x=[np.datetime64(date) for date in cell_predictions['dates']],
+                y_actual=cell_predictions['dq_actual'],
+                y_predict=cell_predictions['dq_predict']
+            ))
 
-            # Plot lines
-            p.line('x', 'y_actual', source=source, legend_label='Actual', line_width=2, line_color='blue')
-            p.line('x', 'y_predict', source=source, legend_label='Predicted', line_width=2, line_color='red')
+            # Plot for capacity (q)
+            p_q = figure(title=f'Cell {cell} - Predicted vs. Actual Capacity (Q)',
+                         x_axis_label='Date',
+                         y_axis_label='Capacity (Ah)',
+                         x_axis_type='datetime',
+                         width=400,
+                         height=400)
 
-            # Add dots (circles) at the actual and predicted points
-            p.circle('x', 'y_actual', source=source, size=8, color='blue', legend_label='Actual', fill_alpha=0.6)
-            p.circle('x', 'y_predict', source=source, size=8, color='red', legend_label='Predicted', fill_alpha=0.6)
+            p_q.line('x', 'y_actual', source=source_q, legend_label='Actual Q', line_width=2, line_color='blue')
+            p_q.line('x', 'y_predict', source=source_q, legend_label='Predicted Q', line_width=2, line_color='red')
+            p_q.circle('x', 'y_actual', source=source_q, size=6, color='blue', legend_label='Actual Q', fill_alpha=0.6)
+            p_q.circle('x', 'y_predict', source=source_q, size=6, color='red', legend_label='Predicted Q', fill_alpha=0.6)
+            p_q.legend.location = 'top_left'
 
-            p.legend.location = 'top_left'
-            plots.append(p)
+            # Plot for dq
+            p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dq',
+                          x_axis_label='Date',
+                          y_axis_label='dq (Ah)',
+                          x_axis_type='datetime',
+                          width=400,
+                          height=400)
 
-        grid = gridplot(plots, ncols=1)
+            p_dq.line('x', 'y_actual', source=source_dq, legend_label='Actual dq', line_width=2, line_color='green')
+            p_dq.line('x', 'y_predict', source=source_dq, legend_label='Predicted dq', line_width=2, line_color='orange')
+            p_dq.circle('x', 'y_actual', source=source_dq, size=6, color='green', legend_label='Actual dq', fill_alpha=0.6)
+            p_dq.circle('x', 'y_predict', source=source_dq, size=6, color='orange', legend_label='Predicted dq', fill_alpha=0.6)
+            p_dq.legend.location = 'top_left'
+
+            plots.append([p_q, p_dq])
+
+        grid = gridplot(plots)
         output_file(os.path.join(self.model_dir, output_filename))
         save(grid)
