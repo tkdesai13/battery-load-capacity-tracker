@@ -64,4 +64,7 @@ else:
 model_evaluator = ModelEvaluator(config=config)
 model_evaluator.evaluate_model(model=model.model, data=train_test_data)
 
+# save the configuration file
+with open(os.path.join(experiment_result_dir, 'config.json'), 'w') as json_file:
+    json.dump(config, json_file, indent=4)
 

@@ -27,13 +27,18 @@ class Model:
         """
         Build and compile a sequential neural network model based on the provided configuration.
         """
+
+        # Define the model architecture
         self.model = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(64, activation='relu', input_shape=(input_features_size,)),
-            tf.keras.layers.Dense(64, activation='relu'),
-            tf.keras.layers.Dense(1, activation='tanh')
+            tf.keras.layers.Dense(64, activation='tanh', input_shape=(input_features_size,)),
+            tf.keras.layers.Dense(32, activation='tanh'),
+            tf.keras.layers.Dense(1, activation='linear')
         ])
 
-        self.model.compile(optimizer='adam',
+        # Compile the model
+        learning_rate = self.config['model_specifications']['learning_rate']
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        self.model.compile(optimizer=optimizer,
                            loss='mean_squared_error',
                            metrics=['mean_absolute_error', 'mean_squared_error'])
 

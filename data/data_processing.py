@@ -160,6 +160,14 @@ class DataProcessor:
 
             # Check for the reference discharge step to process the accumulated data
             if step_data['comment'] == 'reference discharge':
+
+                if ground_truth_cycle_counter > 1:
+                    current_cycle_capacity = self._process_reference_capacity_step(step_data)
+                    previous_cycle_capacity = processed_data_cycle_wise[ground_truth_cycle_counter - 1]['ground_truth_cycle']['capacity']
+
+                    if abs(current_cycle_capacity['capacity'] - previous_cycle_capacity) > 0.4:
+                        continue  # Skip the cycle if the capacity difference is too large
+
                 # Process the accumulated load pattern data
                 processed_data = self._process_load_pattern_each_step(accumulated_data)
 
@@ -429,3 +437,50 @@ class DataProcessor:
 
         return split_data
 
+    def load_and_acccumulate_data(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load the data from the data path and structure it into a dictionary.
+
+        :return: The raw data from all cycles structured as a dictionary.
+        """
+        data_path = self.config['paths']['data']
+        raw_data = {}
+
+        for cell_type, cells in self.config['cells'].items():
+            raw_data[cell_type] = {}
+            for cell in cells:
+                cell_name = str(cell)
+                print(f"Loading data for {cell_type}/{cell_name}")
+                file_path = self._construct_file_path(data_path, cell_name)
+                raw_cell_data = self._load_and_process_file(file_path)
+                raw_data[cell_type][cell_name] = self._accumulate_cell_data(raw_cell_data)
+
+        return raw_data
+
+    def _accumulate_cell_data(self, cell_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Preprocess the data for a single cell.
+
+        :param cell_data: The raw data for a single cell.
+        :return: The accumulated data for the cell.
+        """
+
+        # Accumulated data dictionaries
+        accumulated_data = {
+            "voltage": [],
+            "current": [],
+            "temperature": [],
+            "time": []
+        }
+
+        for step_counter, step_data in enumerate(cell_data['step']):
+
+            # Accumulate data for each key
+            for key in accumulated_data.keys():
+                value = step_data[key]
+                if isinstance(value, list):
+                    accumulated_data[key].extend(value)
+                else:
+                    accumulated_data[key].append(value)
+
+        return accumulated_data

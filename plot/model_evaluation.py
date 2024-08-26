@@ -170,7 +170,7 @@ class ModelEvaluator:
                          x_axis_label='Date',
                          y_axis_label='Capacity (Ah)',
                          x_axis_type='datetime',
-                         width=400,
+                         width=800,
                          height=400)
 
             p_q.line('x', 'y_actual', source=source_q, legend_label='Actual Q', line_width=2, line_color='blue')
@@ -180,11 +180,11 @@ class ModelEvaluator:
             p_q.legend.location = 'top_left'
 
             # Plot for dq
-            p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dq',
+            p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dQ',
                           x_axis_label='Date',
-                          y_axis_label='dq (Ah)',
+                          y_axis_label='dQ (Ah)',
                           x_axis_type='datetime',
-                          width=400,
+                          width=800,
                           height=400)
 
             p_dq.line('x', 'y_actual', source=source_dq, legend_label='Actual dq', line_width=2, line_color='green')
