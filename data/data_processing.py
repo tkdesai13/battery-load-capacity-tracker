@@ -8,6 +8,10 @@ import scipy.io
 import numpy as np
 from collections import defaultdict
 from typing import Dict, Any, Tuple
+import torch
+import torch.nn as nn
+import torch_geometric
+from torch_geometric.data import Data
 
 
 def matstruct_to_dict(matstruct: Any) -> dict:
@@ -165,7 +169,7 @@ class DataProcessor:
                     current_cycle_capacity = self._process_reference_capacity_step(step_data)
                     previous_cycle_capacity = processed_data_cycle_wise[ground_truth_cycle_counter - 1]['ground_truth_cycle']['capacity']
 
-                    if abs(current_cycle_capacity['capacity'] - previous_cycle_capacity) > 0.4:
+                    if abs(current_cycle_capacity['capacity'] - previous_cycle_capacity) > 0.4 or abs(current_cycle_capacity['capacity'] - previous_cycle_capacity) < 0.01:
                         continue  # Skip the cycle if the capacity difference is too large
 
                 # Process the accumulated load pattern data
@@ -271,6 +275,12 @@ class DataProcessor:
 
         # Initialize transition matrix
         transitions = defaultdict(int)
+        all_bins = list(
+            itertools.product(range(len(voltage_bins)), range(len(current_bins)), range(len(temperature_bins))))
+        for bin_from, bin_to in itertools.product(all_bins, repeat=2):
+            if bin_from != bin_to:  # Exclude self-transitions
+                transitions[(tuple(bin_from), tuple(bin_to))] = 0
+
         prev_indices = combined_indices[:-1]
         curr_indices = combined_indices[1:]
         changed_mask = np.any(prev_indices != curr_indices, axis=1)
@@ -437,6 +447,32 @@ class DataProcessor:
 
         return split_data
 
+    def shuffle_and_split_graph_data(self, graph_data):
+        """
+        :param graph_data:  The graph data structured by cell type, cell name, and cycle number.
+        :return:
+        """
+
+        train_graphs = []
+        val_graphs = []
+        val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
+
+        for cell_name, cycles in graph_data['train_cells'].items():
+            cycles_list = list(cycles.items())  # Convert to a list of tuples (cycle_no, graph)
+            np.random.shuffle(cycles_list)
+
+            split_index = int(len(cycles_list) * (1 - val_split_ratio))
+            train_cycles = cycles_list[:split_index]
+            val_cycles = cycles_list[split_index:]
+
+            # Append the graphs to their respective lists
+            for _, graph in train_cycles:
+                train_graphs.append(graph)
+            for _, graph in val_cycles:
+                val_graphs.append(graph)
+
+        return train_graphs, val_graphs
+
     def load_and_acccumulate_data(self) -> Dict[str, Dict[str, Any]]:
         """
         Load the data from the data path and structure it into a dictionary.
@@ -484,3 +520,71 @@ class DataProcessor:
                     accumulated_data[key].append(value)
 
         return accumulated_data
+
+    def prepare_graph_data(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """
+        Prepare the data for training and testing by constructing graph data for each cycle.
+
+        :param preprocessed_data: The preprocessed data structured as a dictionary.
+        :return: A dictionary containing graph data for training and testing.
+        """
+
+        cycle_graph_data = {'train_cells': {}, 'test_cells': {}}
+
+        for cell_type, cells in preprocessed_data.items():
+            for cell_name, cell_data in cells.items():
+                print(f"Preparing graph data for {cell_type}/{cell_name}")
+
+                previous_cycle_capacity = self.config['nominal_capacity']
+
+                cycle_graph_data[cell_type][cell_name] = {}
+
+                for cycle_no, cycle_data in cell_data.items():
+                    graph = self.construct_graph_for_cycle(cycle_data, previous_cycle_capacity)
+                    cycle_graph_data[cell_type][cell_name][cycle_no] = graph
+
+                    # Update previous_cycle_capacity for the next iteration
+                    previous_cycle_capacity = cycle_data['ground_truth_cycle']['capacity']
+
+        return cycle_graph_data
+
+    def construct_graph_for_cycle(self, data_point: Dict[str, Any], previous_cycle_capacity: float) -> Data:
+        """
+        Construct a graph from the provided data point.
+
+        :param data_point: A dictionary containing accumulated time bins, transitions, and ground truth cycle data.
+        :param previous_cycle_capacity: The capacity from the previous cycle used as a global feature.
+        :return: A PyTorch Geometric Data object representing the graph.
+        """
+
+        # Nodes and their features (accumulated time in bins)
+        node_features = []
+        node_indices = []
+
+        for node, time_spent in data_point['accumulated_time_bins'].items():
+            node_features.append([time_spent])
+            node_indices.append(node)
+
+        node_features = torch.tensor(node_features, dtype=torch.float)
+
+        # Edges and their features (number of transitions)
+        edge_indices = []
+        edge_features = []
+
+        for (node_from, node_to), num_jumps in data_point['accumulated_transitions'].items():
+            edge_indices.append([node_indices.index(node_from), node_indices.index(node_to)])
+            edge_features.append([num_jumps])
+
+        edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_features, dtype=torch.float)
+
+        # Global feature: previous cycle's capacity
+        global_feat = torch.tensor([previous_cycle_capacity], dtype=torch.float)
+
+        # Target: capacity decay
+        current_cycle_capacity = data_point['ground_truth_cycle']['capacity']
+        capacity_decay = current_cycle_capacity - previous_cycle_capacity
+        y = torch.tensor([capacity_decay], dtype=torch.float)
+
+        # Create and return the Data object
+        return Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=y, global_feat=global_feat)

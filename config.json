@@ -1,5 +1,5 @@
 {
-    "experiment_name": "changed_capacity_and_bins_lr0001_10000E",
+    "experiment_name": "ANN_trial_second",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
