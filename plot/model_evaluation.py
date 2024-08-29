@@ -20,8 +20,10 @@ class ModelEvaluator:
         :param model: A trained model.
         :param data: A dictionary containing the features and target of training and testing cells.
         """
-        aggregated_predictions = {'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []},
-                                  'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []}}
+        aggregated_predictions = {
+            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []},
+            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []}
+        }
 
         for cell_type in ['train_cells', 'test_cells']:
             cells_data = data[cell_type]
@@ -31,6 +33,12 @@ class ModelEvaluator:
                 # Evaluate the model for this single cell
                 predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data)
 
+                # Combine predictions and metrics
+                combined_data = {
+                    'predictions': predictions[cell],
+                    'metrics': cell_metrics
+                }
+
                 # Accumulate all actual, predicted values, dq values, and dates
                 aggregated_predictions[cell_type.split('_')[0]]['q_actual'].extend(predictions[cell]['q_actual'])
                 aggregated_predictions[cell_type.split('_')[0]]['q_predict'].extend(predictions[cell]['q_predict'])
@@ -38,8 +46,8 @@ class ModelEvaluator:
                 aggregated_predictions[cell_type.split('_')[0]]['dq_predict'].extend(predictions[cell]['dq_predict'])
                 aggregated_predictions[cell_type.split('_')[0]]['dates'].extend(predictions[cell]['dates'])
 
-                # Save metrics for the individual cell
-                self._save_metrics(predictions[cell], f'{cell_type}_{cell}_predictions.json')
+                # Save combined predictions and metrics for the individual cell
+                self._save_metrics(combined_data, f'{cell_type}_{cell}_predictions.json')
 
             # Calculate aggregated metrics over all cells for this cell type (train/test)
             metrics = self._calculate_aggregated_metrics(aggregated_predictions[cell_type.split('_')[0]])
@@ -170,30 +178,67 @@ class ModelEvaluator:
                          x_axis_label='Date',
                          y_axis_label='Capacity (Ah)',
                          x_axis_type='datetime',
-                         width=800,
+                         width=400,
                          height=400)
 
             p_q.line('x', 'y_actual', source=source_q, legend_label='Actual Q', line_width=2, line_color='blue')
             p_q.line('x', 'y_predict', source=source_q, legend_label='Predicted Q', line_width=2, line_color='red')
             p_q.circle('x', 'y_actual', source=source_q, size=6, color='blue', legend_label='Actual Q', fill_alpha=0.6)
-            p_q.circle('x', 'y_predict', source=source_q, size=6, color='red', legend_label='Predicted Q', fill_alpha=0.6)
+            p_q.circle('x', 'y_predict', source=source_q, size=6, color='red', legend_label='Predicted Q',
+                       fill_alpha=0.6)
             p_q.legend.location = 'top_left'
+
+            # Regression and Identity Line for q_actual vs q_predict
+            max_q = max(max(cell_predictions['q_actual']), max(cell_predictions['q_predict']))
+            min_q = min(min(cell_predictions['q_actual']), min(cell_predictions['q_predict']))
+
+            regression_q = figure(width=400, height=400, title=f'Cell {cell} - Actual Q vs. Predicted Q',
+                                  x_axis_label='Actual Q (Ah)', y_axis_label='Predicted Q (Ah)',
+                                  x_range=(min_q, max_q), y_range=(min_q, max_q))
+
+            regression_q.circle(cell_predictions['q_actual'], cell_predictions['q_predict'], size=6, color='black',
+                                fill_alpha=0.6)
+
+            # Identity line
+            regression_q.line([min_q, max_q], [min_q, max_q], line_width=2, color='green', legend_label='Identity Line')
+
+            regression_q.legend.location = 'top_left'
 
             # Plot for dq
             p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dQ',
                           x_axis_label='Date',
                           y_axis_label='dQ (Ah)',
                           x_axis_type='datetime',
-                          width=800,
+                          width=400,
                           height=400)
 
             p_dq.line('x', 'y_actual', source=source_dq, legend_label='Actual dq', line_width=2, line_color='green')
-            p_dq.line('x', 'y_predict', source=source_dq, legend_label='Predicted dq', line_width=2, line_color='orange')
-            p_dq.circle('x', 'y_actual', source=source_dq, size=6, color='green', legend_label='Actual dq', fill_alpha=0.6)
-            p_dq.circle('x', 'y_predict', source=source_dq, size=6, color='orange', legend_label='Predicted dq', fill_alpha=0.6)
+            p_dq.line('x', 'y_predict', source=source_dq, legend_label='Predicted dq', line_width=2,
+                      line_color='orange')
+            p_dq.circle('x', 'y_actual', source=source_dq, size=6, color='green', legend_label='Actual dq',
+                        fill_alpha=0.6)
+            p_dq.circle('x', 'y_predict', source=source_dq, size=6, color='orange', legend_label='Predicted dq',
+                        fill_alpha=0.6)
             p_dq.legend.location = 'top_left'
 
-            plots.append([p_q, p_dq])
+            # Regression and Identity Line for dq_actual vs dq_predict
+            max_dq = max(max(cell_predictions['dq_actual']), max(cell_predictions['dq_predict']))
+            min_dq = min(min(cell_predictions['dq_actual']), min(cell_predictions['dq_predict']))
+
+            regression_dq = figure(width=400, height=400, title=f'Cell {cell} - Actual dQ vs. Predicted dQ',
+                                   x_axis_label='Actual dQ (Ah)', y_axis_label='Predicted dQ (Ah)',
+                                   x_range=(min_dq, max_dq), y_range=(min_dq, max_dq))
+
+            regression_dq.circle(cell_predictions['dq_actual'], cell_predictions['dq_predict'], size=6, color='black',
+                                 fill_alpha=0.6)
+
+            # Identity line
+            regression_dq.line([min_dq, max_dq], [min_dq, max_dq], line_width=2, color='purple',
+                               legend_label='Identity Line')
+
+            regression_dq.legend.location = 'top_left'
+
+            plots.append([p_q, regression_q, p_dq, regression_dq])
 
         grid = gridplot(plots)
         output_file(os.path.join(self.model_dir, output_filename))
