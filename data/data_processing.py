@@ -267,7 +267,7 @@ class DataProcessor:
         for v_bin, c_bin, t_bin in itertools.product(range(0, len(voltage_bins)),
                                                      range(0, len(current_bins)),
                                                      range(0, len(temperature_bins))):
-            time_bins[(v_bin, c_bin, t_bin)] = 0.0
+            time_bins[(v_bin, c_bin, t_bin)] = 0
 
         # Calculate time spent in each bin
         for idx, t in zip(combined_indices[1:], time_diffs):

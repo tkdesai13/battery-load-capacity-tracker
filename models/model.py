@@ -73,6 +73,7 @@ class Model:
         self.model.fit(
             np.array(train_data['features']), np.array(train_data['target']),
             epochs=self.config['model_specifications']['epochs'],
+            batch_size=self.config['model_specifications']['batch_size'],
             validation_data=(np.array(val_data['features']), np.array(val_data['target'])),
             callbacks=[early_stopping, tensorboard_callback, model_checkpoint_callback],
             verbose=1

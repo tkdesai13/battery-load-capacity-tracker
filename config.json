@@ -1,5 +1,5 @@
 {
-    "experiment_name": "ANN_trial_second",
+    "experiment_name": "data_visualisation",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
@@ -8,8 +8,8 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW9", "RW10", "RW3", "RW4", "RW1", "RW2", "RW25", "RW26", "RW17", "RW18", "RW21", "RW22", "RW13", "RW14"],
-        "test_cells": ["RW11", "RW12", "RW5", "RW6", "RW7", "RW8", "RW27", "RW28", "RW19", "RW20", "RW23", "RW24", "RW15", "RW16"]
+        "train_cells": ["RW4", "RW6", "RW8", "RW10", "RW12", "RW14", "RW16", "RW17", "RW20", "RW22", "RW24", "RW26", "RW28"],
+        "test_cells": ["RW1", "RW5", "RW7", "RW9", "RW11", "RW13", "RW15", "RW19", "RW21", "RW23", "RW25", "RW27"]
     },
     "nominal_capacity":2.1,
     "signals": {
@@ -64,15 +64,15 @@
         }
     },
     "model_specifications": {
-        "epochs": 1000,
-        "batch_size": 1024,
+        "epochs": 1500,
+        "batch_size": 32,
         "val_train_split_ratio": 0.2,
         "encoder_input_seq": 50,
         "decoder_input_seq": 1000,
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
         "early_stopping_patience": 400,
-        "learning_rate": 0.001,
+        "learning_rate": 0.005,
         "decay_steps": 10,
         "decay_rate": 1.0,
         "weights_logging_freq_epochs": 20,
@@ -89,15 +89,15 @@
     },
     "time_bins": {
         "voltage_bins": [
-            [3, 3.5],
-            [3.5, 4],
-            [4, 4.5]
+            [3, 3.2],
+            [3.2, 4],
+            [4, 4.2]
             ],
         "current_bins": [
-            [-3, -2],
+            [-4, -2],
             [-2, 0],
             [0, 2],
-            [2, 3]
+            [2, 4]
             ],
         "temperature_bins": [
             [-10, 5],
