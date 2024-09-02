@@ -38,10 +38,14 @@ print("Start: Data extraction and Processing")
 data_processing = DataProcessor(config=config)
 
 # Load and preprocess the data cell by cell
-data = data_processing.load_and_preprocess_data()
+time_bins_and_transition_data = data_processing.load_and_binning_data()
+
+# prepare the scalar or vector features
+time_bins_and_transition_data = data_processing.prepare_scalar_features(time_bins_and_transition_data)
+time_bins_and_transition_data = data_processing.prepare_vector_features(time_bins_and_transition_data)
 
 # prepare the data for training and testing
-train_test_data = data_processing.prepare_features_target_variables(data)
+train_test_data = data_processing.prepare_features_target_variables(time_bins_and_transition_data)
 
 # shuffle and split the data
 shuffled_and_split_data = data_processing.shuffle_and_split_data(train_test_data)
@@ -49,7 +53,7 @@ shuffled_and_split_data = data_processing.shuffle_and_split_data(train_test_data
 # Initialize the Model class
 model = Model(config=config)
 
-# Build the model or load the trained model
+# Build and train the model or load the trained model
 if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
     model.load_model(exp_path=config['paths']['trained_model'])
 else:
@@ -68,3 +72,11 @@ model_evaluator.evaluate_model(model=model.model, data=train_test_data)
 with open(os.path.join(experiment_result_dir, 'config.json'), 'w') as json_file:
     json.dump(config, json_file, indent=4)
 
+# Get bin mappings if needed
+bin_mapping = data_processing.get_bin_mapping()
+print("Bin mapping:", bin_mapping)
+
+# Example: Retrieve bin intervals for a specific bin
+v_bin, c_bin, t_bin = bin_mapping[0]  # Example: get the first bin intervals
+intervals = data_processing.get_bin_intervals(v_bin, c_bin, t_bin)
+print(f"Voltage Interval: {intervals[0]}, Current Interval: {intervals[1]}, Temperature Interval: {intervals[2]}")

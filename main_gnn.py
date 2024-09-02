@@ -38,7 +38,7 @@ print("Start: Data extraction and Processing")
 data_processing = DataProcessor(config=config)
 
 # Load and preprocess the data cell by cell
-data = data_processing.load_and_preprocess_data()
+data = data_processing.load_and_binning_data()
 
 # Prepare graph for training and testing
 graph_data = data_processing.prepare_graph_data(data)

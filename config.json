@@ -8,8 +8,8 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW4", "RW6", "RW8", "RW10", "RW12", "RW14", "RW16", "RW17", "RW20", "RW22", "RW24", "RW26", "RW28"],
-        "test_cells": ["RW1", "RW5", "RW7", "RW9", "RW11", "RW13", "RW15", "RW19", "RW21", "RW23", "RW25", "RW27"]
+        "train_cells": ["RW4"],
+        "test_cells": ["RW1"]
     },
     "nominal_capacity":2.1,
     "signals": {

@@ -74,7 +74,7 @@ def create_plots(data_processing, output_dir):
 
             # Load data for the specific cell
             file_path = data_processing._construct_file_path(data_processing.config['paths']['data'], cell_name)
-            raw_cell_data = data_processing._load_and_process_file(file_path)
+            raw_cell_data = data_processing._load_and_mat_to_dict(file_path)
             cell_data = data_processing._accumulate_cell_data(raw_cell_data)
 
             voltage = cell_data['voltage']
