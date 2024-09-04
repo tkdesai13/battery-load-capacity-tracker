@@ -41,14 +41,14 @@ data_processing = DataProcessor(config=config)
 time_bins_and_transition_data = data_processing.load_and_binning_data()
 
 # prepare the scalar or vector features
-time_bins_and_transition_data = data_processing.prepare_scalar_features(time_bins_and_transition_data)
+time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(time_bins_and_transition_data)
 time_bins_and_transition_data = data_processing.prepare_vector_features(time_bins_and_transition_data)
 
-# prepare the data for training and testing
-train_test_data = data_processing.prepare_features_target_variables(time_bins_and_transition_data)
+# get the min/max and scale the data
+scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
 
 # shuffle and split the data
-shuffled_and_split_data = data_processing.shuffle_and_split_data(train_test_data)
+shuffled_and_split_data = data_processing.shuffle_and_split_data(scaled_data)
 
 # Initialize the Model class
 model = Model(config=config)
@@ -57,16 +57,20 @@ model = Model(config=config)
 if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
     model.load_model(exp_path=config['paths']['trained_model'])
 else:
-    input_features_size = len(shuffled_and_split_data['train_cells']['features'][0])
-    model.build_model(input_features_size=input_features_size)
+    timebins_size = len(shuffled_and_split_data['train']['timebins'][0])
+
+    model.build_model(timebins_size=timebins_size)
 
     # Train the model
-    model.train_model(train_data=shuffled_and_split_data['train_cells'],
-                      val_data=shuffled_and_split_data['validation_cells'])
+    model.train_model(train_data=shuffled_and_split_data['train'],
+                      val_data=shuffled_and_split_data['validation'])
 
 # plot the results for training and testing data, save error metrics
 model_evaluator = ModelEvaluator(config=config)
-model_evaluator.evaluate_model(model=model.model, data=train_test_data)
+model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values)
+
+# Adding min-max values to the configuration file
+config['min_max_values'] = min_max_values
 
 # save the configuration file
 with open(os.path.join(experiment_result_dir, 'config.json'), 'w') as json_file:

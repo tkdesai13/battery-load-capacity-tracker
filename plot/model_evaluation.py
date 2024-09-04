@@ -13,7 +13,7 @@ class ModelEvaluator:
         self.model_dir = os.path.join(config['paths']['result'], config['experiment_name'])
         os.makedirs(self.model_dir, exist_ok=True)
 
-    def evaluate_model(self, model, data: Dict[str, Any]):
+    def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any]):
         """
         Evaluate the model using the provided training and testing data.
 
@@ -31,7 +31,7 @@ class ModelEvaluator:
 
             for cell, cell_data in cells_data.items():
                 # Evaluate the model for this single cell
-                predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data)
+                predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values)
 
                 # Combine predictions and metrics
                 combined_data = {
@@ -59,8 +59,7 @@ class ModelEvaluator:
             # Plot the results for this cell type
             self._plot_results(predictions, f'{cell_type}_results.html')
 
-
-    def _evaluate_single_cell(self, model, cell_data: Dict[str, Any]):
+    def _evaluate_single_cell(self, model, cell_data: Dict[str, Any], min_max_values: Dict):
         """
         Evaluate a single cell's performance.
 
@@ -71,16 +70,36 @@ class ModelEvaluator:
         """
         predictions = {}
 
-        features = cell_data['features']
-        dq_actual = np.array(cell_data['target'])  # Actual dq values
-        dq_predict = model.predict(features).flatten()  # Predicted dq values
+        # Extract time bins and previous_capacity for all cycles
+        timebins_all_cycle_cells = np.array(
+            [list(cycle_data['accumulated_time_bins'].values()) for cycle_no, cycle_data in cell_data.items()])
+        previous_capacity_all_cycle_cells = np.array(
+            [cycle_data['previous_capacity'] for cycle_no, cycle_data in cell_data.items()])
 
-        ground_truth = cell_data['ground_truth_cycle']
-        nominal_capacity = self.config['nominal_capacity']
+        # Actual dq values
+        dq_actual = np.array([cycle_data['capacity_diff'] for cycle_no, cycle_data in cell_data.items()])
 
-        q_actual = np.array([cycle['capacity'] for cycle in ground_truth])
-        dates = [cycle['date'] for cycle in ground_truth]
-        q_prev_step = [nominal_capacity] + q_actual[:-1].tolist()
+        # Ensure that previous_capacity_all_cycle_cells is correctly shaped as (N, 1) where N is the number of cycles
+        previous_capacity_all_cycle_cells = previous_capacity_all_cycle_cells.reshape(-1, 1)
+
+        # Predicted dq values using the model, pass both inputs in a list
+        dq_predict = model.predict([timebins_all_cycle_cells, previous_capacity_all_cycle_cells]).flatten()
+
+        # Previous capacity values
+        q_prev_step = np.array([cycle_data['previous_capacity'] for cycle_no, cycle_data in cell_data.items()])
+
+        # Descaling the capacity difference and other features, used for plot
+        if self.config['model_config']['data_scaling'] is True:
+            if 'capacity_diff' in self.config['model_config']['signals_to_scale']:
+                dq_predict = self.descale_value(dq_predict, min_max_values['capacity_diff'])
+                dq_actual = self.descale_value(dq_actual, min_max_values['capacity_diff'])
+            if 'previous_capacity' in self.config['model_config']['signals_to_scale']:
+                q_prev_step = self.descale_value(q_prev_step, min_max_values['previous_capacity'])
+
+        # Actual capacity values
+        q_actual = np.array([cycle_data['capacity'] for cycle_no, cycle_data in cell_data.items()])
+        dates = np.array([cycle_data['date'] for cycle_no, cycle_data in cell_data.items()])
+
         q_predict = [q_prev + dq_current_predict for q_prev, dq_current_predict in zip(q_prev_step, dq_predict.tolist())]
 
         # Store predictions, actual values, dq values, and dates
@@ -243,3 +262,19 @@ class ModelEvaluator:
         grid = gridplot(plots)
         output_file(os.path.join(self.model_dir, output_filename))
         save(grid)
+
+    def descale_value(self, data, min_max_values):
+        """
+        Scale the data using the global min/max values for each feature.
+
+        :param data: The preprocessed data structured as a dictionary.
+        :param min_max_values: The global min/max values for each feature.
+        :return: The scaled data or the original data based on the configuration.
+        """
+        min_value = min_max_values['min']
+        max_value = min_max_values['max']
+
+        if max_value > min_value:
+            return (data * (max_value - min_value)) + min_value
+        else:
+            return 0.0  # Handle edge case where min and max are the same

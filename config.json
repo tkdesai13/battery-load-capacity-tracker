@@ -1,5 +1,5 @@
 {
-    "experiment_name": "data_visualisation",
+    "experiment_name": "trial_noscale_second__oldbins_1500E_ANN_without_time_0001",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
@@ -8,8 +8,35 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
     },
     "cells": {
-        "train_cells": ["RW4"],
-        "test_cells": ["RW1"]
+        "train_cells": [
+            "RW4",
+            "RW6",
+            "RW8",
+            "RW10",
+            "RW12",
+            "RW14",
+            "RW16",
+            "RW17",
+            "RW20",
+            "RW22",
+            "RW24",
+            "RW26",
+            "RW28"
+        ],
+        "test_cells": [
+            "RW1",
+            "RW5",
+            "RW7",
+            "RW9",
+            "RW11",
+            "RW13",
+            "RW15",
+            "RW19",
+            "RW21",
+            "RW23",
+            "RW25",
+            "RW27"
+        ]
     },
     "nominal_capacity":2.1,
     "signals": {
@@ -53,15 +80,11 @@
     "model_config": {
         "encoder_input_signals": ["Current", "Sensor Voltage"],
         "decoder_input_signals": ["Current"],
-        "signals_to_scale": ["Current", "Sensor Voltage"],
+        "data_scaling": false,
+        "signals_to_scale": ["accumulated_time_bins", "accumulated_transitions", "previous_capacity"],
         "output_signal": ["Sensor Voltage"],
         "sampling_frequency": 1,
         "trained_model": false
-    },
-    "signals_to_plot": {
-        "Current": {
-            "descaling": true
-        }
     },
     "model_specifications": {
         "epochs": 1500,
@@ -72,7 +95,7 @@
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
         "early_stopping_patience": 400,
-        "learning_rate": 0.005,
+        "learning_rate": 0.01,
         "decay_steps": 10,
         "decay_rate": 1.0,
         "weights_logging_freq_epochs": 20,
@@ -89,9 +112,9 @@
     },
     "time_bins": {
         "voltage_bins": [
-            [3, 3.2],
-            [3.2, 4],
-            [4, 4.2]
+            [3, 3.5],
+            [3.5, 4],
+            [4, 4.5]
             ],
         "current_bins": [
             [-4, -2],

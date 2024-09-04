@@ -308,8 +308,22 @@ class DataProcessor:
 
         return {"date": step_date, "capacity": capacity}
 
-    def prepare_scalar_features(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict:
+    def prepare_scalar_features(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Tuple[
+        Dict, Dict[str, Dict[str, float]]]:
         all_cell_target_feature_data = {}
+
+        # Initialize min/max trackers for all metrics
+        min_max_values = {
+            'accumulated_time_bins': {'min': float('inf'), 'max': float('-inf')},
+            'accumulated_transitions': {'min': float('inf'), 'max': float('-inf')},
+            'capacity': {'min': float('inf'), 'max': float('-inf')},
+            'capacity_diff': {'min': float('inf'), 'max': float('-inf')},
+            'previous_capacity': {'min': float('inf'), 'max': float('-inf')}
+        }
+
+        # Flags to stop min checks after setting to zero
+        time_bins_min_zero_set = False
+        transitions_min_zero_set = False
 
         for cell_type, cells in preprocessed_data.items():
             all_cell_target_feature_data[cell_type] = {}
@@ -325,7 +339,7 @@ class DataProcessor:
                     current_capacity = cycle_data['ground_truth_cycle'].get('capacity', previous_capacity)
 
                     # Initialize cycle-specific data structures with zero values for all bins and bin pairs
-                    cycle_accumulated_time_bins = {key: 0.0 for key in self.bin_mapping.keys()}
+                    cycle_accumulated_time_bins = dict.fromkeys(self.bin_mapping.keys(), 0.0)
                     cycle_transition_counts = self.initialize_transitions_per_bin_pair()
 
                     # Accumulate time for each bin across all transitions within a cycle
@@ -334,14 +348,56 @@ class DataProcessor:
                         time_spent = entry['time_spent']
                         cycle_accumulated_time_bins[bin_index] += time_spent
 
+                    # Check and update min/max for time_bins
+                    if not time_bins_min_zero_set:
+                        time_bin_indices = {entry['bin_index'] for entry in time_bins}
+                        if len(time_bin_indices) != len(cycle_accumulated_time_bins):
+                            min_max_values['accumulated_time_bins']['min'] = 0.0
+                            time_bins_min_zero_set = True
+                        else:
+                            min_max_values['accumulated_time_bins']['min'] = min(min_max_values['accumulated_time_bins']['min'],
+                                                                     min(cycle_accumulated_time_bins.values()))
+
+                    # Always update the max value
+                    min_max_values['accumulated_time_bins']['max'] = max(min_max_values['accumulated_time_bins']['max'],
+                                                             max(cycle_accumulated_time_bins.values()))
+                    print(cycle_no, max(cycle_accumulated_time_bins.values()))
+                    print('overall max')
+                    print(cycle_no, min_max_values['accumulated_time_bins']['max'])
+
                     # Accumulate transitions between bins
                     for transition in transitions:
                         start_bin = transition['from_bin']
                         end_bin = transition['to_bin']
                         cycle_transition_counts[(start_bin, end_bin)] += 1
 
+                    # Check and update min/max for transitions
+                    if not transitions_min_zero_set:
+                        transition_pairs = {(transition['from_bin'], transition['to_bin']) for transition in
+                                            transitions}
+                        if len(transition_pairs) != len(cycle_transition_counts):
+                            min_max_values['accumulated_transitions']['min'] = 0
+                            transitions_min_zero_set = True
+                        else:
+                            min_max_values['accumulated_transitions']['min'] = min(min_max_values['accumulated_transitions']['min'],
+                                                                       min(cycle_transition_counts.values()))
+
+                    # Always update the max value
+                    min_max_values['accumulated_transitions']['max'] = max(min_max_values['accumulated_transitions']['max'],
+                                                               max(cycle_transition_counts.values()))
+
                     # Calculate capacity difference
                     capacity_diff = current_capacity - previous_capacity
+
+                    # Update min/max for capacity, capacity_diff, and previous_capacity
+                    min_max_values['capacity']['min'] = min(min_max_values['capacity']['min'], current_capacity)
+                    min_max_values['capacity']['max'] = max(min_max_values['capacity']['max'], current_capacity)
+                    min_max_values['capacity_diff']['min'] = min(min_max_values['capacity_diff']['min'], capacity_diff)
+                    min_max_values['capacity_diff']['max'] = max(min_max_values['capacity_diff']['max'], capacity_diff)
+                    min_max_values['previous_capacity']['min'] = min(min_max_values['previous_capacity']['min'],
+                                                                     previous_capacity)
+                    min_max_values['previous_capacity']['max'] = max(min_max_values['previous_capacity']['max'],
+                                                                     previous_capacity)
 
                     # Store the features and target in the output dictionary
                     all_cell_target_feature_data[cell_type][cell_name][cycle_no] = {
@@ -356,7 +412,7 @@ class DataProcessor:
                     # Update previous capacity for next cycle
                     previous_capacity = current_capacity
 
-        return all_cell_target_feature_data
+        return all_cell_target_feature_data, min_max_values
 
     def prepare_vector_features(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict:
         """
@@ -400,6 +456,62 @@ class DataProcessor:
             matrix[i, bin_index] = time_spent
 
         return matrix
+
+    def scale_data(self, all_cell_target_feature_data: Dict[str, Dict[str, Any]], min_max_values: Dict) -> Dict:
+        """
+        Scale the data using the global min/max values for each feature.
+
+        :param all_cell_target_feature_data: The preprocessed data structured as a dictionary.
+        :param min_max_values: The global min/max values for each feature.
+        :return: The scaled data or the original data based on the configuration.
+        """
+
+        # Check if data_scaling is enabled in the config
+        if not self.config['model_config'].get('data_scaling', False):
+            # If data_scaling is not enabled, return the data as is
+            return all_cell_target_feature_data
+
+        # Initialize scaled data dictionary
+        scaled_data = {}
+
+        # Features to be scaled according to config
+        signals_to_scale = self.config['model_config'].get('signals_to_scale', [])
+
+        for cell_type, cells in all_cell_target_feature_data.items():
+            scaled_data[cell_type] = {}
+            for cell_name, cycles in cells.items():
+                scaled_data[cell_type][cell_name] = {}
+
+                for cycle_no, cycle_data in cycles.items():
+                    scaled_cycle_data = {}
+
+                    # Iterate over all signals in cycle_data
+                    for signal in cycle_data.keys():
+                        if signal in signals_to_scale:
+                            # Apply scaling if the signal is in signals_to_scale
+                            min_value = min_max_values[signal]['min']
+                            max_value = min_max_values[signal]['max']
+
+                            if isinstance(cycle_data[signal], dict):  # Handle dictionary values (like bins)
+                                scaled_signal_data = {}
+                                for key, value in cycle_data[signal].items():
+                                    scaled_signal_data[key] = self._scale_value(value, min_value, max_value)
+                                scaled_cycle_data[signal] = scaled_signal_data
+                            else:  # Handle scalar values
+                                scaled_cycle_data[signal] = self._scale_value(cycle_data[signal], min_value, max_value)
+                        else:
+                            # If the signal is not to be scaled, copy it as is
+                            scaled_cycle_data[signal] = cycle_data[signal]
+
+                    scaled_data[cell_type][cell_name][cycle_no] = scaled_cycle_data
+
+        return scaled_data
+
+    def _scale_value(self, value, min_value, max_value):
+        if max_value > min_value:
+            return (value - min_value) / (max_value - min_value)
+        else:
+            return 0.0  # Avoid division by zero
 
     def _add_time_bins(self, accumulated_time_bins: dict, current_time_bins: dict) -> dict:
         """
@@ -483,48 +595,55 @@ class DataProcessor:
         """
 
         split_data = {
-            "train_cells": {
-                "features": [],
-                "target": [],
-                "ground_truth_cycle": []
+            "train": {
+                "timebins": [],
+                'previous_capacity': [],
+                "capacity_difference": []
             },
-            "validation_cells": {
-                "features": [],
-                "target": [],
-                "ground_truth_cycle": []
+            "validation": {
+                "timebins": [],
+                'previous_capacity': [],
+                "capacity_difference": []
             },
-            "test_cells": {}
+            "test_cells": train_test_data["test_cells"]  # Directly assign test data without shuffling
         }
 
-        # Combine and shuffle training data
-        combined_features = []
-        combined_target = []
-        combined_ground_truth_capacity = []
-
+        # Combine all training cycles into a single list of tuples (timebins, previous_capacity, capacity_difference)
+        combined_cycles = []
         for cell_name, data in train_test_data["train_cells"].items():
-            combined_features.extend(data["features"])
-            combined_target.extend(data["target"])
-            combined_ground_truth_capacity.extend(data["ground_truth_cycle"])
+            for cycle_no, cycle_data in data.items():
+                combined_cycles.append((
+                    list(cycle_data["accumulated_time_bins"].values()),  # Convert dict_values to list
+                    cycle_data["previous_capacity"],
+                    cycle_data["capacity_diff"]
+                ))
 
-        # Shuffle the combined features and targets together
-        combined = list(zip(combined_features, combined_target, combined_ground_truth_capacity))
-        np.random.shuffle(combined)
-        shuffled_features, shuffled_target, shuffled_ground_truth_capacity = zip(*combined)
+        # Shuffle the list of combined cycles
+        np.random.shuffle(combined_cycles)
 
         # Calculate the split index for validation
         val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
-        split_index = int(len(shuffled_features) * (1 - val_split_ratio))
+        split_index = int(len(combined_cycles) * (1 - val_split_ratio))
 
-        # Split the data into training and validation sets
-        split_data["train_cells"]["features"] = list(shuffled_features[:split_index])
-        split_data["train_cells"]["target"] = list(shuffled_target[:split_index])
-        split_data["train_cells"]["ground_truth_cycle"] = list(shuffled_ground_truth_capacity[:split_index])
-        split_data["validation_cells"]["features"] = list(shuffled_features[split_index:])
-        split_data["validation_cells"]["target"] = list(shuffled_target[split_index:])
-        split_data["validation_cells"]["ground_truth_cycle"] = list(shuffled_ground_truth_capacity[split_index:])
+        # Split the cycles into training and validation sets
+        train_cycles = combined_cycles[:split_index]
+        val_cycles = combined_cycles[split_index:]
 
-        # Retain test data without shuffling
-        split_data["test_cells"] = train_test_data["test_cells"]
+        # Unzip the training and validation cycles into their respective components
+        split_data["train"]["timebins"], split_data["train"]["previous_capacity"], \
+        split_data["train"]["capacity_difference"] = zip(*train_cycles) if train_cycles else ([], [], [])
+        split_data["validation"]["timebins"], split_data["validation"]["previous_capacity"], \
+        split_data["validation"]["capacity_difference"] = zip(*val_cycles) if val_cycles else ([], [], [])
+
+        # Convert the zipped results back to lists
+        split_data["train"]["timebins"] = list(split_data["train"]["timebins"])
+        split_data["train"]["previous_capacity"] = list(split_data["train"]["previous_capacity"])
+        split_data["train"]["capacity_difference"] = list(split_data["train"]["capacity_difference"])
+
+        split_data["validation"]["timebins"] = list(split_data["validation"]["timebins"])
+        split_data["validation"]["previous_capacity"] = list(split_data["validation"]["previous_capacity"])
+        split_data["validation"]["capacity_difference"] = list(
+            split_data["validation"]["capacity_difference"])
 
         return split_data
 

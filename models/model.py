@@ -1,10 +1,7 @@
-# Description: This file contains class for building the model and training them.
-
 import tensorflow as tf
 import os
 import numpy as np
 from typing import Dict, Any
-
 
 class Model:
     def __init__(self, config: Dict[str, Any]):
@@ -23,17 +20,25 @@ class Model:
         if not os.path.exists(self.checkpoints_dir):
             os.makedirs(self.checkpoints_dir)
 
-    def build_model(self, input_features_size: int):
+    def build_model(self, timebins_size: int):
         """
-        Build and compile a sequential neural network model based on the provided configuration.
+        Build and compile a neural network model with two inputs based on the provided configuration.
         """
 
+        # Define input layers
+        timebins_input = tf.keras.layers.Input(shape=(timebins_size,), name='timebins_input')
+        previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
+
+        # Concatenate the inputs
+        concatenated = tf.keras.layers.Concatenate()([timebins_input, previous_capacity_input])
+
         # Define the model architecture
-        self.model = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(64, activation='tanh', input_shape=(input_features_size,)),
-            tf.keras.layers.Dense(32, activation='tanh'),
-            tf.keras.layers.Dense(1, activation='linear')
-        ])
+        x = tf.keras.layers.Dense(64, activation='tanh')(concatenated)
+        x = tf.keras.layers.Dense(32, activation='tanh')(x)
+        output = tf.keras.layers.Dense(1, activation='linear')(x)
+
+        # Build the model
+        self.model = tf.keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
 
         # Compile the model
         learning_rate = self.config['model_specifications']['learning_rate']
@@ -71,10 +76,14 @@ class Model:
 
         # Train the model
         self.model.fit(
-            np.array(train_data['features']), np.array(train_data['target']),
+            [np.array(train_data['timebins']), np.array(train_data['previous_capacity'])],
+            np.array(train_data['capacity_difference']),
             epochs=self.config['model_specifications']['epochs'],
             batch_size=self.config['model_specifications']['batch_size'],
-            validation_data=(np.array(val_data['features']), np.array(val_data['target'])),
+            validation_data=(
+                [np.array(val_data['timebins']), np.array(val_data['previous_capacity'])],
+                np.array(val_data['capacity_difference'])
+            ),
             callbacks=[early_stopping, tensorboard_callback, model_checkpoint_callback],
             verbose=1
         )
@@ -85,4 +94,3 @@ class Model:
         """
         trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.h5')
         self.model = tf.keras.models.load_model(trained_model_path)
-
