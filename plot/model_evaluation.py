@@ -1,5 +1,7 @@
 import os
 import json
+import tensorflow as tf
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 import numpy as np
 from typing import Dict, Any
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -13,7 +15,7 @@ class ModelEvaluator:
         self.model_dir = os.path.join(config['paths']['result'], config['experiment_name'])
         os.makedirs(self.model_dir, exist_ok=True)
 
-    def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any]):
+    def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any], max_sequence_length: int = None):
         """
         Evaluate the model using the provided training and testing data.
 
@@ -31,7 +33,7 @@ class ModelEvaluator:
 
             for cell, cell_data in cells_data.items():
                 # Evaluate the model for this single cell
-                predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values)
+                predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values, max_sequence_length)
 
                 # Combine predictions and metrics
                 combined_data = {
@@ -59,7 +61,7 @@ class ModelEvaluator:
             # Plot the results for this cell type
             self._plot_results(predictions, f'{cell_type}_results.html')
 
-    def _evaluate_single_cell(self, model, cell_data: Dict[str, Any], min_max_values: Dict):
+    def _evaluate_single_cell(self, model, cell_data: Dict[str, Any], min_max_values: Dict, max_sequence_length: int):
         """
         Evaluate a single cell's performance.
 
@@ -70,20 +72,33 @@ class ModelEvaluator:
         """
         predictions = {}
 
-        # Extract time bins and previous_capacity for all cycles
-        timebins_all_cycle_cells = np.array(
-            [list(cycle_data['accumulated_time_bins'].values()) for cycle_no, cycle_data in cell_data.items()])
         previous_capacity_all_cycle_cells = np.array(
             [cycle_data['previous_capacity'] for cycle_no, cycle_data in cell_data.items()])
-
-        # Actual dq values
-        dq_actual = np.array([cycle_data['capacity_diff'] for cycle_no, cycle_data in cell_data.items()])
 
         # Ensure that previous_capacity_all_cycle_cells is correctly shaped as (N, 1) where N is the number of cycles
         previous_capacity_all_cycle_cells = previous_capacity_all_cycle_cells.reshape(-1, 1)
 
-        # Predicted dq values using the model, pass both inputs in a list
-        dq_predict = model.predict([timebins_all_cycle_cells, previous_capacity_all_cycle_cells]).flatten()
+        # Extract time bins and previous_capacity for all cycles
+        if self.config['scalar_vector_exp_flag'] == 'scalar':
+            timebins_all_cycle_cells = np.array(
+                [list(cycle_data['accumulated_time_bins'].values()) for cycle_no, cycle_data in cell_data.items()])
+
+            # Predicted dq values using the model, pass both inputs in a list
+            dq_predict = model.predict([timebins_all_cycle_cells, previous_capacity_all_cycle_cells]).flatten()
+        else:
+            timebins_all_cycle_cells = np.array(
+                [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()])
+
+            # Pad the timebins sequences for both train and validation data
+            padded_train_timebins = pad_sequences(timebins_all_cycle_cells, maxlen=max_sequence_length, padding='pre',
+                                                  dtype='float32')
+
+            # Predicted dq values using the model, pass both inputs in a list
+            dq_predict = model.predict([tf.convert_to_tensor(padded_train_timebins),
+                                        tf.convert_to_tensor(previous_capacity_all_cycle_cells)]).flatten()
+
+        # Actual dq values
+        dq_actual = np.array([cycle_data['capacity_diff'] for cycle_no, cycle_data in cell_data.items()])
 
         # Previous capacity values
         q_prev_step = np.array([cycle_data['previous_capacity'] for cycle_no, cycle_data in cell_data.items()])

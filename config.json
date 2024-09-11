@@ -1,5 +1,6 @@
 {
-    "experiment_name": "trial_noscale_second__oldbins_1500E_ANN_without_time_0001",
+    "experiment_name": "trial_all_nasa_training_monitor_val_loss_tanh_0001_vector_noscale_oldbins_1500E_ANN_without_time_0001",
+    "scalar_vector_exp_flag": "vector",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
@@ -77,6 +78,12 @@
             "unit": "s"
         }
     },
+    "data": {
+        "ground_truth_cycle_validity": {
+            "min_capacity_change": 0.01,
+            "max_capacity_change": 0.4
+            }
+        },
     "model_config": {
         "encoder_input_signals": ["Current", "Sensor Voltage"],
         "decoder_input_signals": ["Current"],
@@ -84,18 +91,19 @@
         "signals_to_scale": ["accumulated_time_bins", "accumulated_transitions", "previous_capacity"],
         "output_signal": ["Sensor Voltage"],
         "sampling_frequency": 1,
-        "trained_model": false
+        "trained_model": false,
+        "monitor": "val_loss"
     },
     "model_specifications": {
-        "epochs": 1500,
+        "epochs": 1000,
         "batch_size": 32,
         "val_train_split_ratio": 0.2,
         "encoder_input_seq": 50,
         "decoder_input_seq": 1000,
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
-        "early_stopping_patience": 400,
-        "learning_rate": 0.01,
+        "early_stopping_patience": 200,
+        "learning_rate": 0.001,
         "decay_steps": 10,
         "decay_rate": 1.0,
         "weights_logging_freq_epochs": 20,

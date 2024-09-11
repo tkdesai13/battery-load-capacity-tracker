@@ -41,8 +41,12 @@ data_processing = DataProcessor(config=config)
 time_bins_and_transition_data = data_processing.load_and_binning_data()
 
 # prepare the scalar or vector features
-time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(time_bins_and_transition_data)
-time_bins_and_transition_data = data_processing.prepare_vector_features(time_bins_and_transition_data)
+if config['scalar_vector_exp_flag'] == 'scalar':
+    time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(
+        time_bins_and_transition_data)
+else:
+    time_bins_and_transition_data, min_max_values = data_processing.prepare_vector_features(
+        time_bins_and_transition_data)
 
 # get the min/max and scale the data
 scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
@@ -53,21 +57,41 @@ shuffled_and_split_data = data_processing.shuffle_and_split_data(scaled_data)
 # Initialize the Model class
 model = Model(config=config)
 
+# plot the results for training and testing data, save error metrics
+model_evaluator = ModelEvaluator(config=config)
+
 # Build and train the model or load the trained model
 if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
     model.load_model(exp_path=config['paths']['trained_model'])
 else:
-    timebins_size = len(shuffled_and_split_data['train']['timebins'][0])
+    if config['scalar_vector_exp_flag'] == 'scalar':
+        no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
 
-    model.build_model(timebins_size=timebins_size)
+        model.build_scalar_model(no_of_input_features=no_of_input_features)
 
-    # Train the model
-    model.train_model(train_data=shuffled_and_split_data['train'],
-                      val_data=shuffled_and_split_data['validation'])
+        # Train the model
+        model.train_model(train_data=shuffled_and_split_data['train'],
+                          val_data=shuffled_and_split_data['validation'])
 
-# plot the results for training and testing data, save error metrics
-model_evaluator = ModelEvaluator(config=config)
-model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values)
+        model_evaluator.evaluate_model(model=model.model,
+                                       data=scaled_data,
+                                       min_max_values=min_max_values)
+
+    else:
+        max_sequence_length = min_max_values['max_transitions']
+        no_of_input_features = len(data_processing.bin_mapping)
+
+        model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+
+        # Train the model
+        model.train_vector_model(train_data=shuffled_and_split_data['train'],
+                                 val_data=shuffled_and_split_data['validation'],
+                                 max_sequence_length=max_sequence_length)
+
+        model_evaluator.evaluate_model(model=model.model,
+                                       data=scaled_data,
+                                       min_max_values=min_max_values,
+                                       max_sequence_length=max_sequence_length)
 
 # Adding min-max values to the configuration file
 config['min_max_values'] = min_max_values
