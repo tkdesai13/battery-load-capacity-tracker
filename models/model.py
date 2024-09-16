@@ -59,7 +59,8 @@ class Model:
         """
 
         # Define input layer for timebins with fixed length (after padding externally)
-        timebins_input = tf.keras.layers.Input(shape=(max_sequence_length, no_of_input_features), name='timebins_input')
+        timebins_input = tf.keras.layers.Input(shape=(max_sequence_length, no_of_input_features),
+                                               name='timebins_input')
 
         # Mask the padded values (assuming padded values are 0)
         masked_timebins = tf.keras.layers.Masking(mask_value=0.0)(timebins_input)
@@ -87,6 +88,11 @@ class Model:
 
         # Build the model
         self.model = tf.keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
+
+        # Save model summary
+        model_summary_path = os.path.join(self.model_dir, 'model_summary.txt')
+        with open(model_summary_path, 'w') as f:
+            self.model.summary(print_fn=lambda x: f.write(x + '\n'))
 
         # Compile the model
         learning_rate = self.config['model_specifications']['learning_rate']
