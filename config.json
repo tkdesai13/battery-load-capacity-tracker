@@ -1,9 +1,9 @@
 {
-    "experiment_name": "trial_all_nasa_training_monitor_val_loss_tanh_0001_vector_noscale_oldbins_1500E_ANN_without_time_0001",
+    "experiment_name": "severson_experiment",
     "scalar_vector_exp_flag": "vector",
     "paths": {
         "trained_model": "",
-        "data": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Raw_Data/All_cells_Data",
+        "data": "/Users/tkddesai/surfdrive/Main drive/Data/Nasa/Raw_data/All_cells_data",
         "model": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Model",
         "tensorboard": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Tensorboard",
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
@@ -22,9 +22,7 @@
             "RW22",
             "RW24",
             "RW26",
-            "RW28"
-        ],
-        "test_cells": [
+            "RW28",
             "RW1",
             "RW5",
             "RW7",
@@ -37,6 +35,9 @@
             "RW23",
             "RW25",
             "RW27"
+        ],
+        "test_cells": [
+            "RW1"
         ]
     },
     "nominal_capacity":2.1,
@@ -92,7 +93,7 @@
         "output_signal": ["Sensor Voltage"],
         "sampling_frequency": 1,
         "trained_model": false,
-        "monitor": "val_loss"
+        "monitor": "loss"
     },
     "model_specifications": {
         "epochs": 1000,

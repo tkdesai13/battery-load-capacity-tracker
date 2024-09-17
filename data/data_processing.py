@@ -3,6 +3,7 @@
 
 import os
 import itertools
+import pickle
 from datetime import datetime
 import scipy.io
 import numpy as np
@@ -165,7 +166,7 @@ class DataProcessor:
                 cell_name = str(cell)
                 print(f"Loading data for {cell_type}/{cell_name}")
                 file_path = self._construct_file_path(data_path, cell_name)
-                raw_cell_data = self._matlab_struct_to_dict(file_path)
+                raw_cell_data = self.load_mat_file_hdf5storage_(file_path)
                 preprocessed_data[cell_type][cell_name] = self._process_cell_data(raw_cell_data)
 
         return preprocessed_data

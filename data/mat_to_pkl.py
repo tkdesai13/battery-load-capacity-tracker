@@ -3,18 +3,26 @@ import h5py
 import pickle
 import numpy as np
 
-# File paths to the .mat files for each batch
+# File paths to the .mat files for each batch for Severson dataset
+# FILE_PATHS = {
+#     'b1': '/Users/tkddesai/surfdrive/Main drive/Data/Severson/2017-05-12_batchdata_updated_struct_errorcorrect.mat',
+#     'b2': '/Users/tkddesai/surfdrive/Main drive/Data/Severson/2017-06-30_batchdata_updated_struct_errorcorrect.mat',
+#     'b3': '/Users/tkddesai/surfdrive/Main drive/Data/Severson/2018-04-12_batchdata_updated_struct_errorcorrect.mat'
+# }
+
+# File paths to the .mat files for each batch for Attia dataset
 FILE_PATHS = {
-    'b1': '/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/2017-05-12_batchdata_updated_struct_errorcorrect.mat',
-    'b2': '/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/2017-06-30_batchdata_updated_struct_errorcorrect.mat',
-    'b3': '/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/2018-04-12_batchdata_updated_struct_errorcorrect.mat'
+    'b9': '/Users/tkddesai/surfdrive/Main drive/Data/Attia/2019-01-24_batchdata_updated_struct_errorcorrect.mat'
 }
 
+tag = 'A'  # S for Severson, A for Peter Attia
+
 # Directory where the .pkl files will be saved
-DATA_PATH = '/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/'
+# DATA_PATH = '/Users/tkddesai/surfdrive/Main drive/Data/Severson/'
+DATA_PATH = '/Users/tkddesai/surfdrive/Main drive/Data/Attia/'
 
 
-def load_mat_file(file_path, batch_name):
+def original_mat_to_pkl_file(file_path, batch_name, tag):
     """
     Loads a .mat file and saves its contents as a .pkl file.
 
@@ -81,7 +89,7 @@ def load_mat_file(file_path, batch_name):
             print(f"Processed cell: {key}")
 
     # Save the bat_dict to a .pkl file
-    output_file_name = f'batch_{batch_name}.pkl'
+    output_file_name = f'{tag}batch_{batch_name}.pkl'
     output_file_path = os.path.join(DATA_PATH, output_file_name)
 
     try:
@@ -91,14 +99,13 @@ def load_mat_file(file_path, batch_name):
     except IOError as e:
         print(f"Error saving the file {output_file_path}: {e}")
 
-    return bat_dict
 
 
-def process_battery_data(data_path):
+def pkl_cell_data_modification_and_combined(data_path):
     """
     Processes saved battery data by removing specified entries, updating others,
-    and combining all batches into a single dictionary. Saves the modified data
-    as a new pickle file apart from the original files.
+    saving each modified batch individually, and combining all batches into a single dictionary.
+    Saves the modified data as new pickle files apart from the original files.
 
     Parameters:
     - data_path: Directory path where the original batch .pkl files are located.
@@ -108,9 +115,9 @@ def process_battery_data(data_path):
     """
     # Load the original batch data
     batch_files = {
-        'batch1': os.path.join(data_path, 'batch_b1.pkl'),
-        'batch2': os.path.join(data_path, 'batch_b2.pkl'),
-        'batch3': os.path.join(data_path, 'batch_b3.pkl')
+        'batch1': os.path.join(data_path, 'Sbatch_b1.pkl'),
+        'batch2': os.path.join(data_path, 'Sbatch_b2.pkl'),
+        'batch3': os.path.join(data_path, 'Sbatch_b3.pkl')
     }
 
     with open(batch_files['batch1'], 'rb') as f:
@@ -165,7 +172,6 @@ def process_battery_data(data_path):
     print(f"Number of batteries in batch2 after removal: {num_batteries_b2}")
 
     # Batch 3 Modifications
-    # remove noisy channels from batch3
     batteries_to_remove_b3 = ['b3c37', 'b3c2', 'b3c23', 'b3c32', 'b3c42', 'b3c43']
     for battery in batteries_to_remove_b3:
         batch3.pop(battery, None)
@@ -179,21 +185,42 @@ def process_battery_data(data_path):
     total_batteries = len(combined_battery_data)
     print(f"Total number of batteries after combining: {total_batteries}")
 
-    # Save the combined dictionary
-    output_file = os.path.join(data_path, 'severson_processed_battery_data.pkl')
+    # Save the individual modified batches
+    batch1_output_file = os.path.join(data_path, 'Smodified_batch1.pkl')
+    batch2_output_file = os.path.join(data_path, 'Smodified_batch2.pkl')
+    batch3_output_file = os.path.join(data_path, 'Smodified_batch3.pkl')
+
     try:
-        with open(output_file, 'wb') as f:
-            pickle.dump(combined_battery_data, f)
-        print(f"Saved processed battery data to {output_file}.")
+        with open(batch1_output_file, 'wb') as f:
+            pickle.dump(batch1, f)
+        print(f"Saved modified batch1 to {batch1_output_file}.")
+
+        with open(batch2_output_file, 'wb') as f:
+            pickle.dump(batch2, f)
+        print(f"Saved modified batch2 to {batch2_output_file}.")
+
+        with open(batch3_output_file, 'wb') as f:
+            pickle.dump(batch3, f)
+        print(f"Saved modified batch3 to {batch3_output_file}.")
+
     except IOError as e:
-        print(f"Error saving the file {output_file}: {e}")
+        print(f"Error saving the modified batches: {e}")
+
+    # Save the combined dictionary
+    combined_output_file = os.path.join(data_path, 'Smodified_batch123.pkl')
+    try:
+        with open(combined_output_file, 'wb') as f:
+            pickle.dump(combined_battery_data, f)
+        print(f"Saved processed battery data to {combined_output_file}.")
+    except IOError as e:
+        print(f"Error saving the file {combined_output_file}: {e}")
 
     return combined_battery_data
 
 
 # Process each batch file and save the corresponding .pkl file
 for batch_name, file_path in FILE_PATHS.items():
-    load_mat_file(file_path, batch_name)
+    original_mat_to_pkl_file(file_path, batch_name, tag)
 
-# Process the saved .pkl files to create the combined and cleaned data
-bat_dict = process_battery_data(DATA_PATH)
+# # Process the saved .pkl files to create the combined and cleaned data (to modify severson dataset)
+# bat_dict = pkl_cell_data_modification_and_combined(DATA_PATH)
