@@ -52,7 +52,7 @@ else:
 scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
 
 # shuffle and split the data
-shuffled_and_split_data = data_processing.shuffle_and_split_data(scaled_data)
+shuffled_and_split_data, test_cells_id = data_processing.shuffle_and_split_data(scaled_data)
 
 # Initialize the Model class
 model = Model(config=config)
@@ -75,7 +75,8 @@ else:
 
         model_evaluator.evaluate_model(model=model.model,
                                        data=scaled_data,
-                                       min_max_values=min_max_values)
+                                       min_max_values=min_max_values,
+                                       test_cells=test_cells_id)
 
     else:
         max_sequence_length = min_max_values['max_transitions']
@@ -91,7 +92,8 @@ else:
         model_evaluator.evaluate_model(model=model.model,
                                        data=scaled_data,
                                        min_max_values=min_max_values,
-                                       max_sequence_length=max_sequence_length)
+                                       max_sequence_length=max_sequence_length,
+                                       test_cells=test_cells_id)
 
 # Adding min-max values to the configuration file
 config['min_max_values'] = min_max_values

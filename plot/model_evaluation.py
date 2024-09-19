@@ -15,51 +15,74 @@ class ModelEvaluator:
         self.model_dir = os.path.join(config['paths']['result'], config['experiment_name'])
         os.makedirs(self.model_dir, exist_ok=True)
 
-    def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any], max_sequence_length: int = None):
+    import os
+    import json
+    from typing import Dict, Any, List
+
+    def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any],
+                       max_sequence_length: int = None, test_cells: List[str] = None):
         """
         Evaluate the model using the provided training and testing data.
 
         :param model: A trained model.
-        :param data: A dictionary containing the features and target of training and testing cells.
+        :param max_sequence_length: The maximum sequence length for the vector model.
+        :param data: A dictionary containing the features and targets for training and testing cells.
+        :param test_cells: List of cell IDs that are designated as test cells.
         """
+        # Aggregated predictions for train and test splits
         aggregated_predictions = {
-            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []},
-            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'dates': []}
+            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []}
         }
 
-        for cell_type in ['train_cells', 'test_cells']:
-            cells_data = data[cell_type]
+        # Split the cells into train and test based on the test_cells list
+        cell_types = {
+            'train': [cell for batch in data.keys() for cell in data[batch] if cell not in test_cells],
+            # All other cells are treated as train
+            'test': test_cells,  # Use the provided test cells list
+        }
+
+        # Iterate over train and test cells and accumulate predictions
+        for split_type, split_cells in cell_types.items():
             predictions = {}
 
-            for cell, cell_data in cells_data.items():
-                # Evaluate the model for this single cell
-                predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values, max_sequence_length)
+            # Iterate through the data batches and process each cell
+            for batch in data.keys():
+                for cell in data[batch].keys():
+                    if cell in split_cells:
+                        cell_data = data[batch][cell]
 
-                # Combine predictions and metrics
-                combined_data = {
-                    'predictions': predictions[cell],
-                    'metrics': cell_metrics
-                }
+                        # Evaluate the model for this single cell
+                        predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values,
+                                                                                     max_sequence_length)
 
-                # Accumulate all actual, predicted values, dq values, and dates
-                aggregated_predictions[cell_type.split('_')[0]]['q_actual'].extend(predictions[cell]['q_actual'])
-                aggregated_predictions[cell_type.split('_')[0]]['q_predict'].extend(predictions[cell]['q_predict'])
-                aggregated_predictions[cell_type.split('_')[0]]['dq_actual'].extend(predictions[cell]['dq_actual'])
-                aggregated_predictions[cell_type.split('_')[0]]['dq_predict'].extend(predictions[cell]['dq_predict'])
-                aggregated_predictions[cell_type.split('_')[0]]['dates'].extend(predictions[cell]['dates'])
+                        # Combine predictions and metrics for the individual cell
+                        combined_data = {
+                            'predictions': predictions[cell],
+                            'metrics': cell_metrics
+                        }
 
-                # Save combined predictions and metrics for the individual cell
-                self._save_metrics(combined_data, f'{cell_type}_{cell}_predictions.json')
+                        # Accumulate actual, predicted values, dq values, and dates
+                        aggregated_predictions[split_type]['q_actual'].extend(predictions[cell]['q_actual'])
+                        aggregated_predictions[split_type]['q_predict'].extend(predictions[cell]['q_predict'])
+                        aggregated_predictions[split_type]['dq_actual'].extend(predictions[cell]['dq_actual'])
+                        aggregated_predictions[split_type]['dq_predict'].extend(predictions[cell]['dq_predict'])
+                        aggregated_predictions[split_type]['cycle_no'].extend(predictions[cell]['cycle_no'])
 
-            # Calculate aggregated metrics over all cells for this cell type (train/test)
-            metrics = self._calculate_aggregated_metrics(aggregated_predictions[cell_type.split('_')[0]])
+                        # Save combined predictions and metrics for the individual cell
+                        self._save_metrics(combined_data, f'{split_type}_{cell}_predictions.json')
 
-            # Save the overall metrics for the cell type
-            with open(os.path.join(self.model_dir, f'{cell_type}_metrics.json'), 'w') as f:
+            # Calculate aggregated metrics over all cells for this split type (train/test)
+            metrics = self._calculate_aggregated_metrics(aggregated_predictions[split_type])
+
+            # Save the overall metrics for the split type
+            with open(os.path.join(self.model_dir, f'{split_type}_metrics.json'), 'w') as f:
                 json.dump(metrics, f, indent=4)
 
-            # Plot the results for this cell type
-            self._plot_results(predictions, f'{cell_type}_results.html')
+            # Plot the results for this split type
+            self._plot_results(predictions, f'{split_type}_results.html')
+
+        return aggregated_predictions
 
     def _evaluate_single_cell(self, model, cell_data: Dict[str, Any], min_max_values: Dict, max_sequence_length: int):
         """
@@ -113,7 +136,7 @@ class ModelEvaluator:
 
         # Actual capacity values
         q_actual = np.array([cycle_data['capacity'] for cycle_no, cycle_data in cell_data.items()])
-        dates = np.array([cycle_data['date'] for cycle_no, cycle_data in cell_data.items()])
+        cycle_no = np.array([cycle_data['cycle_no'] for cycle_no, cycle_data in cell_data.items()])
 
         q_predict = [q_prev + dq_current_predict for q_prev, dq_current_predict in zip(q_prev_step, dq_predict.tolist())]
 
@@ -122,7 +145,7 @@ class ModelEvaluator:
         predictions['q_predict'] = q_predict
         predictions['dq_actual'] = dq_actual.tolist()
         predictions['dq_predict'] = dq_predict.tolist()
-        predictions['dates'] = [date.isoformat() for date in dates]  # Convert datetime to string for JSON serialization
+        predictions['cycle_no'] = cycle_no.tolist()
 
         # Individual cell metrics for q and dq
         cell_metrics = {
@@ -196,22 +219,21 @@ class ModelEvaluator:
         plots = []
         for cell, cell_predictions in predictions.items():
             source_q = ColumnDataSource(data=dict(
-                x=[np.datetime64(date) for date in cell_predictions['dates']],
+                x=cell_predictions['cycle_no'],
                 y_actual=cell_predictions['q_actual'],
                 y_predict=cell_predictions['q_predict']
             ))
 
             source_dq = ColumnDataSource(data=dict(
-                x=[np.datetime64(date) for date in cell_predictions['dates']],
+                x=cell_predictions['cycle_no'],
                 y_actual=cell_predictions['dq_actual'],
                 y_predict=cell_predictions['dq_predict']
             ))
 
             # Plot for capacity (q)
             p_q = figure(title=f'Cell {cell} - Predicted vs. Actual Capacity (Q)',
-                         x_axis_label='Date',
+                         x_axis_label='Cyele Number',
                          y_axis_label='Capacity (Ah)',
-                         x_axis_type='datetime',
                          width=400,
                          height=400)
 
@@ -242,7 +264,6 @@ class ModelEvaluator:
             p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dQ',
                           x_axis_label='Date',
                           y_axis_label='dQ (Ah)',
-                          x_axis_type='datetime',
                           width=400,
                           height=400)
 

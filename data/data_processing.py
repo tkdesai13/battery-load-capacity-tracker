@@ -4,11 +4,12 @@
 import os
 import itertools
 import pickle
+import random
 from datetime import datetime
 import scipy.io
 import numpy as np
 from collections import defaultdict
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 import torch
 import torch.nn as nn
 import torch_geometric
@@ -153,73 +154,125 @@ class DataProcessor:
 
     def load_and_binning_data(self) -> Dict[str, Dict[str, Any]]:
         """
-        Load the data from the data path, process, and structure it into a dictionary.
+        Iterates through each pickle file in the data_path, processes each batch of cell data,
+        and structures the processed data into a dictionary, including batch numbers.
 
-        :return: The preprocessed data structured as a dictionary.
+        :return: The preprocessed data structured as a dictionary, with batch numbers as cell types.
         """
         data_path = self.config['paths']['data']
         preprocessed_data = {}
 
-        for cell_type, cells in self.config['cells'].items():
-            preprocessed_data[cell_type] = {}
-            for cell in cells:
-                cell_name = str(cell)
-                print(f"Loading data for {cell_type}/{cell_name}")
-                file_path = self._construct_file_path(data_path, cell_name)
-                raw_cell_data = self.load_mat_file_hdf5storage_(file_path)
-                preprocessed_data[cell_type][cell_name] = self._process_cell_data(raw_cell_data)
+        # Iterate over all .pkl files in the data directory
+        all_files = os.listdir(data_path)
+        for file_name in all_files:
+            if file_name.endswith('.pkl'):
+                batch_no = self._extract_batch_number(file_name)  # Function to extract batch number from the file name
+                print(f"Processing batch {batch_no} from {file_name}")
+
+                # Load the pickle file
+                file_path = os.path.join(data_path, file_name)
+                with open(file_path, 'rb') as f:
+                    batch_data = pickle.load(f)
+
+                # Initialize batch in preprocessed_data
+                preprocessed_data[batch_no] = {}
+
+                # Process each cell in the batch
+                for cell_name, cell_data in batch_data.items():
+                    print(f"Processing cell {cell_name} in batch {batch_no}")
+
+                    # Send the cell data to the preprocess function
+                    processed_cell_data = self._process_cell_data(cell_data, batch_no)
+
+                    # Store the processed cell data under the batch_no
+                    preprocessed_data[batch_no][cell_name] = processed_cell_data
 
         return preprocessed_data
 
-    def _process_cell_data(self, cell_data: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+    def _extract_batch_number(self, file_name: str) -> str:
+        """
+        Helper function to extract the batch number from the file name.
+        Assumes that the batch number is in the format 'Sbatch_bX.pkl', where X is the batch number.
+
+        :param file_name: The file name from which to extract the batch number.
+        :return: The extracted batch number as a string.
+        """
+        # Assuming the file name is in the format 'Sbatch_bX.pkl'
+        batch_no = file_name.split('_')[1].replace('.pkl', '')  # Extract 'bX'
+        return batch_no
+
+    def _get_field_mapping(self) -> Dict[str, str]:
+        """
+        Generate a mapping from raw data keys to desired field names using self.config.
+        """
+        field_mapping = {}
+        for raw_key, signal_info in self.config['signals'].items():
+            field_mapping[raw_key] = signal_info['name']
+        return field_mapping
+
+    def _initialize_accumulated_data(self) -> dict:
+        """
+        Initialize the structure for accumulating data using field names from self.config.
+        """
+        field_mapping = self._get_field_mapping()
+        accumulated_data = {field_name: [] for field_name in field_mapping.values()}
+        return accumulated_data
+
+    def _accumulate_cycles_data(self, accumulated_data: dict, cycle_data: dict):
+        """
+        Accumulate data from a single step into the accumulated data structure using field mapping.
+        """
+        field_mapping = self._get_field_mapping()
+        for raw_key, field_name in field_mapping.items():
+            if raw_key in cycle_data:
+                value = cycle_data[raw_key]
+                if isinstance(value, list):
+                    accumulated_data[field_name].extend(value)
+                else:
+                    accumulated_data[field_name].append(value)
+
+    def _process_cell_data(self, cell_data: Dict[str, Any], batch_no: str) -> Dict[int, Dict[str, Any]]:
         """
         Preprocess the data for a single cell.
         """
-        cycle_counter = 1
+        cumulative_time_for_cell = 0.0
         processed_data = {}
         accumulated_data = self._initialize_accumulated_data()
 
-        for step_data in cell_data['step']:
-            self._accumulate_step_data(accumulated_data, step_data)
+        for cycle_counter in cell_data['cycles'].keys():
 
-            if step_data['comment'] == 'reference discharge':
-                if cycle_counter > 1 and not self._is_valid_capacity_change(processed_data, cycle_counter, step_data):
-                    continue
+            cycle_data = cell_data['cycles'][cycle_counter]
 
-                processed_load_pattern = self._process_load_pattern(accumulated_data)
+            # Access the dictionary of batches and cycles to skip
+            batches_to_skip = self.config['data']['batches_and_cycle_to_skip']
+
+            # Check if the current batch has a cycle to skip and if the current cycle matches
+            if batch_no in batches_to_skip and int(cycle_counter) == batches_to_skip[batch_no]:
+                continue  # Skip processing this cycle
+
+            self._accumulate_cycles_data(accumulated_data, cycle_data)
+
+            ground_truth_cycle_frequency = self.config['data']['ground_truth_cycle_frequency']
+            cycle_counter_from_one = int(cycle_counter) + 1
+            if cycle_counter_from_one % ground_truth_cycle_frequency == 0:
+                # if cycle_counter > 1 and not self._is_valid_capacity_change(processed_data, cycle_counter, cycle_data):
+                #     continue
+
+                processed_load_pattern, cumulative_time_for_cell = self._process_load_pattern(accumulated_data, cumulative_time_for_cell)
+
+                cell_summery_data = cell_data['summary']
 
                 processed_data[cycle_counter] = {
                     'accumulated_time_bins': processed_load_pattern["time_bins"],
                     'accumulated_transitions': processed_load_pattern["transitions"],
-                    'ground_truth_cycle': self._process_reference_capacity(step_data)
+                    'ground_truth_cycle': self._process_reference_capacity(cell_summery_data=cell_summery_data,
+                                                                           cycle_counter=cycle_counter),
+                    'cumulative_time_at_ground_truth': cumulative_time_for_cell
                 }
 
                 accumulated_data = self._initialize_accumulated_data()
-                cycle_counter += 1
 
         return processed_data
-
-    def _initialize_accumulated_data(self) -> dict:
-        """
-        Initialize the structure for accumulating data.
-        """
-        return {
-            "voltage": [],
-            "current": [],
-            "temperature": [],
-            "time": []
-        }
-
-    def _accumulate_step_data(self, accumulated_data: dict, step_data: dict):
-        """
-        Accumulate data from a single step into the accumulated data structure.
-        """
-        for key in accumulated_data.keys():
-            value = step_data[key]
-            if isinstance(value, list):
-                accumulated_data[key].extend(value)
-            else:
-                accumulated_data[key].append(value)
 
     def _is_valid_capacity_change(self, processed_data: dict, cycle_counter: int, step_data: dict) -> bool:
         """
@@ -232,17 +285,31 @@ class DataProcessor:
         max_change = self.config['data']['ground_truth_cycle_validity']['max_capacity_change']
         return min_change <= capacity_diff <= max_change
 
-    def _process_load_pattern(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_load_pattern(self, step_data: Dict[str, Any], cumulative_time_for_cell: float) -> tuple[
+        dict[str, list], float]:
         """
         Process the load pattern data by calculating the time spent in each bin and transitions between bins.
+        This includes adjusting the time data to form a continuous time series across cycles.
         """
-        voltage_data = step_data["voltage"]
-        current_data = step_data["current"]
-        temperature_data = step_data["temperature"]
-        time_data = step_data["time"]
 
+        # Adjust and concatenate time data
+        adjusted_time_arrays = []
+        for time_array in step_data["time"]:
+            time_array = time_array/60  # Convert time to hours
+            adjusted_time_array = time_array + cumulative_time_for_cell
+            adjusted_time_arrays.append(adjusted_time_array)  # Adjust time to be continuous across cycles
+            cumulative_time_for_cell += time_array[0, -1]  # Update cumulative time for the cell
+
+        time_data = np.concatenate(adjusted_time_arrays, axis=1).flatten()
+
+        # Concatenate other data arrays
+        voltage_data = np.concatenate(step_data["voltage"], axis=1).flatten()
+        current_data = np.concatenate(step_data["current"], axis=1).flatten()
+        temperature_data = np.concatenate(step_data["temperature"], axis=1).flatten()
+
+        # Pass the data to the _bin_data_vector function
         time_bins, transitions = self._bin_data_vector(voltage_data, current_data, temperature_data, time_data)
-        return {"time_bins": time_bins, "transitions": transitions}
+        return {"time_bins": time_bins, "transitions": transitions}, cumulative_time_for_cell
 
     def _bin_data_vector(self, voltage, current, temperature, time) -> Tuple[list, list]:
         """
@@ -253,7 +320,7 @@ class DataProcessor:
         t_indices = self._digitize_data(temperature, self.temperature_bins)
 
         combined_indices = np.stack((v_indices, c_indices, t_indices), axis=-1)
-        time_diffs = np.diff(time) / 3600  # Convert time differences to hours
+        time_diffs = np.diff(time) / 60  # Convert time differences to hours
 
         transitions = np.where(np.any(combined_indices[1:] != combined_indices[:-1], axis=1))[0]
 
@@ -296,20 +363,22 @@ class DataProcessor:
         indices = np.digitize(data, bins[:, 1], right=True)
         return np.clip(indices, 0, len(bins) - 1)
 
-    def _process_reference_capacity(self, step_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _process_reference_capacity(self, cell_summery_data: Dict[str, Any], cycle_counter: int) -> Dict[str, Any]:
         """
         Process the capacity measurement data.
         """
-        date_str = step_data.get("date", "")
-        step_date = datetime.strptime(date_str, "%d-%b-%Y %H:%M:%S") if date_str else None
+        # date_str = cell_summery_data.get("date", "")
+        # step_date = datetime.strptime(date_str, "%d-%b-%Y %H:%M:%S") if date_str else None
 
-        current_data = step_data["current"]
-        relative_time_data = step_data["relativeTime"]
-        relative_time_hours = np.array(relative_time_data) / 3600.0
+        # current_data = cell_summery_data["current"]
+        # relative_time_data = cell_summery_data["relativeTime"]
+        # relative_time_hours = np.array(relative_time_data) / 3600.0
 
-        capacity = np.trapz(current_data, relative_time_hours)
+        # capacity = np.trapz(current_data, relative_time_hours)
+        cycle_counter_from_one = int(cycle_counter) + 1
+        capacity = cell_summery_data["QD"][int(cycle_counter)]
 
-        return {"date": step_date, "capacity": capacity}
+        return {"cycle_no": cycle_counter_from_one, "capacity": capacity}
 
     def prepare_scalar_features(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Tuple[
         Dict, Dict[str, Dict[str, float]]]:
@@ -542,7 +611,8 @@ class DataProcessor:
                         'accumulated_time_bins': vector_time_bins,
                         'accumulated_transitions': transition_matrix,
                         'capacity': current_capacity,
-                        'date': cycle_data['ground_truth_cycle']['date'],
+                        'cumulative_time_at_ground_truth': cycle_data['cumulative_time_at_ground_truth'],
+                        'cycle_no': cycle_data['ground_truth_cycle']['cycle_no'],
                         'capacity_diff': capacity_diff,
                         'previous_capacity': previous_capacity
                     }
@@ -708,75 +778,137 @@ class DataProcessor:
         # Returning the structured data for training and testing
         return train_test_data
 
-    def shuffle_and_split_data(self, train_test_data: Dict[str, Dict[str, Dict[str, Any]]]) -> (
-            Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]):
+    def shuffle_and_split_data(self, scaled_data: Dict[str, Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
         """
-        Shuffle the training data by combining all training cells together,
-        and return the shuffled training data, validation data, and unaltered testing data.
+        Split data into train, validation, and test sets based on cell and cycle data.
 
-        :param train_test_data: The training and testing data structured by cell type and cell name.
-        :return: A tuple containing the training data, validation data, and unshuffled testing data.
+        1. Randomly select % (according to config file) of the cells for the test set (without shuffling their cycles).
+        2. Combine cycles from the remaining of cells, shuffle them, and split 80% ((according to config file)) for training and 20% for validation.
+
+        :param scaled_data: The dataset structured by batch, cell, and cycles.
+        :return: A dictionary with the split data for train, validation, and test sets.
         """
 
         split_data = {
             "train": {
                 "timebins": [],
-                'previous_capacity': [],
-                "capacity_difference": []
+                "previous_capacity": [],
+                "capacity_difference": [],
+                "cumulative_time_at_ground_truth": []
             },
             "validation": {
                 "timebins": [],
-                'previous_capacity': [],
-                "capacity_difference": []
+                "previous_capacity": [],
+                "capacity_difference": [],
+                "cumulative_time_at_ground_truth": []
             },
-            "test_cells": train_test_data["test_cells"]  # Directly assign test data without shuffling
+            "test": {}  # This will store test cells
         }
 
-        # Combine all training cycles into a single list of tuples (timebins, previous_capacity, capacity_difference)
+        for batch_name, batch_cells in scaled_data.items():
+            cell_names = list(batch_cells.keys())
+
+            # Split test cells and train/validation cells
+            test_cells, train_cells = self._split_test_cells(cell_names)
+
+            # Assign test cells directly to the test set
+            for test_cell in test_cells:
+                split_data["test"][test_cell] = batch_cells[test_cell]
+
+            # Process train and validation cycles
+            combined_cycles = self._combine_cycles_from_cells(train_cells, batch_cells)
+
+            # Shuffle and split combined cycles into training and validation sets
+            train_cycles, val_cycles = self._split_train_val_cycles(combined_cycles)
+
+            # Add the cycles to the respective train and validation sets
+            self._add_cycles_to_split(split_data, "train", train_cycles)
+            self._add_cycles_to_split(split_data, "validation", val_cycles)
+
+        return split_data, test_cells
+
+    def _split_test_cells(self, cell_names: List[str]) -> Tuple[List[str], List[str]]:
+        """
+        Split cell names into test and training/validation sets.
+
+        :param cell_names: List of cell names in a batch.
+        :return: Tuple of (test_cells, train_cells).
+        """
+        test_train_cells_ratio = self.config['model_specifications']['test_train_cells_ratio']
+        test_size = int(len(cell_names) * test_train_cells_ratio)
+        test_cells = random.sample(cell_names, test_size)
+        train_cells = [cell for cell in cell_names if cell not in test_cells]
+        return test_cells, train_cells
+
+    def _combine_cycles_from_cells(self, cell_names: List[str], batch_cells: Dict[str, Any]) -> List[Tuple]:
+        """
+        Combine cycles from cells into a single list for further processing.
+
+        :param cell_names: List of cell names to combine.
+        :param batch_cells: All cell data for the current batch.
+        :return: A list of combined cycles from the given cells.
+        """
         combined_cycles = []
-        for cell_name, data in train_test_data["train_cells"].items():
-            for cycle_no, cycle_data in data.items():
-                # Handle both dict and numpy array formats
-                accumulated_time_bins = cycle_data["accumulated_time_bins"]
-                if isinstance(accumulated_time_bins, dict):
-                    accumulated_time_bins = list(accumulated_time_bins.values())  # Convert dict_values to list
-                elif isinstance(accumulated_time_bins, np.ndarray):
-                    accumulated_time_bins = accumulated_time_bins.tolist()  # Convert ndarray to list
+
+        for cell in cell_names:
+            for cycle_data in batch_cells[cell].values():
+                accumulated_time_bins = self._convert_to_list(cycle_data["accumulated_time_bins"])
+                previous_capacity = cycle_data["previous_capacity"]
+                capacity_diff = cycle_data["capacity_diff"]
+                cumulative_time_at_ground_truth = cycle_data["cumulative_time_at_ground_truth"]
 
                 combined_cycles.append((
-                    accumulated_time_bins,  # Ensure it's a list in both cases
-                    cycle_data["previous_capacity"],
-                    cycle_data["capacity_diff"]
+                    accumulated_time_bins,
+                    previous_capacity,
+                    capacity_diff,
+                    cumulative_time_at_ground_truth
                 ))
 
-        # Shuffle the list of combined cycles
-        np.random.shuffle(combined_cycles)
+        return combined_cycles
 
-        # Calculate the split index for validation
-        val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
+    def _split_train_val_cycles(self, combined_cycles: List[Tuple]) -> Tuple[List[Tuple], List[Tuple]]:
+        """
+        Split the combined cycles into training and validation sets.
+
+        :param combined_cycles: List of cycles to split.
+        :return: Tuple of (train_cycles, val_cycles).
+        """
+        np.random.shuffle(combined_cycles)
+        val_split_ratio = self.config['model_specifications']['val_train_cycles_ratio']
         split_index = int(len(combined_cycles) * (1 - val_split_ratio))
 
-        # Split the cycles into training and validation sets
         train_cycles = combined_cycles[:split_index]
         val_cycles = combined_cycles[split_index:]
 
-        # Unzip the training and validation cycles into their respective components
-        split_data["train"]["timebins"], split_data["train"]["previous_capacity"], \
-            split_data["train"]["capacity_difference"] = zip(*train_cycles) if train_cycles else ([], [], [])
-        split_data["validation"]["timebins"], split_data["validation"]["previous_capacity"], \
-            split_data["validation"]["capacity_difference"] = zip(*val_cycles) if val_cycles else ([], [], [])
+        return train_cycles, val_cycles
 
-        # Convert the zipped results back to lists
-        split_data["train"]["timebins"] = list(split_data["train"]["timebins"])
-        split_data["train"]["previous_capacity"] = list(split_data["train"]["previous_capacity"])
-        split_data["train"]["capacity_difference"] = list(split_data["train"]["capacity_difference"])
+    def _add_cycles_to_split(self, split_data: Dict[str, Any], split_type: str, cycles: List[Tuple]) -> None:
+        """
+        Add cycles to the specified split (train or validation) in split_data.
 
-        split_data["validation"]["timebins"] = list(split_data["validation"]["timebins"])
-        split_data["validation"]["previous_capacity"] = list(split_data["validation"]["previous_capacity"])
-        split_data["validation"]["capacity_difference"] = list(
-            split_data["validation"]["capacity_difference"])
+        :param split_data: Dictionary containing split data.
+        :param split_type: 'train' or 'validation' to determine where to add the data.
+        :param cycles: List of cycle data tuples to add.
+        """
+        if cycles:
+            timebins, previous_capacity, capacity_difference, cumulative_time_at_ground_truth = zip(*cycles)
+            split_data[split_type]["timebins"].extend(timebins)
+            split_data[split_type]["previous_capacity"].extend(previous_capacity)
+            split_data[split_type]["capacity_difference"].extend(capacity_difference)
+            split_data[split_type]["cumulative_time_at_ground_truth"].extend(cumulative_time_at_ground_truth)
 
-        return split_data
+    def _convert_to_list(self, data: Any) -> List:
+        """
+        Convert data (which could be a dict or ndarray) to a list.
+
+        :param data: Data to be converted.
+        :return: List representation of the data.
+        """
+        if isinstance(data, dict):
+            return list(data.values())
+        elif isinstance(data, np.ndarray):
+            return data.tolist()
+        return data  # Assume it's already a list if not dict or ndarray
 
     def shuffle_and_split_graph_data(self, graph_data):
         """

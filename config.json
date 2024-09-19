@@ -1,104 +1,67 @@
 {
-    "experiment_name": "severson_experiment",
+    "experiment_name": "V1000E_001l_B128_30T",
     "scalar_vector_exp_flag": "vector",
     "paths": {
         "trained_model": "",
-        "data": "/Users/tkddesai/surfdrive/Main drive/Data/Nasa/Raw_data/All_cells_data",
-        "model": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Model",
-        "tensorboard": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Tensorboard",
-        "result": "/Users/tkddesai/surfdrive/Main drive/Data/NASA/Results"
+        "data": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/all_data",
+        "model": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Model",
+        "tensorboard": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Tensorboard",
+        "result": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results"
     },
     "cells": {
-        "train_cells": [
-            "RW4",
-            "RW6",
-            "RW8",
-            "RW10",
-            "RW12",
-            "RW14",
-            "RW16",
-            "RW17",
-            "RW20",
-            "RW22",
-            "RW24",
-            "RW26",
-            "RW28",
-            "RW1",
-            "RW5",
-            "RW7",
-            "RW9",
-            "RW11",
-            "RW13",
-            "RW15",
-            "RW19",
-            "RW21",
-            "RW23",
-            "RW25",
-            "RW27"
-        ],
-        "test_cells": [
-            "RW1"
-        ]
+        "train_cells": ["RW4"],
+        "test_cells": ["RW1"]
     },
-    "nominal_capacity":2.1,
+    "nominal_capacity": 1.1,
     "signals": {
-        "I_full_vec_M1_NMC25degC": {
-            "name": "Current",
+        "I": {
+            "name": "current",
             "max_value": 1.4,
             "min_value": -4.9,
             "unit": "A"
         },
-        "V_full_vec_M1_NMC25degC": {
-            "name": "Sensor Voltage",
+        "V": {
+            "name": "voltage",
             "max_value": 4.5,
             "min_value": 3.0,
             "unit": "V"
         },
-        "Step_Index_full_vec_M1_NMC25degC": {
-            "name": "Cycle Step",
-            "max_value": 14,
-            "min_value": 0,
-            "unit": ""
-        },
-        "ch_cap_full_vec_M1_NMC25degC": {
-            "name": "Charging Capacity (SOC)",
-            "max_value": 1.0,
-            "min_value": 0.0,
-            "unit": "Ah"
-        },
-        "dis_cap_full_vec_M1_NMC25degC": {
-            "name": "Discharge Capacity (DOD)",
-            "max_value": 4.8,
-            "min_value": 0.8,
-            "unit": "Ah"
-        },
-        "t_full_vec_M1_NMC25degC": {
-            "name": "Time",
+        "t": {
+            "name": "time",
             "max_value": 0,
             "min_value": 0,
             "unit": "s"
+        },
+        "T": {
+            "name": "temperature",
+            "max_value": 90,
+            "min_value": -10,
+            "unit": "°C"
         }
     },
     "data": {
         "ground_truth_cycle_validity": {
             "min_capacity_change": 0.01,
             "max_capacity_change": 0.4
-            }
         },
+        "ground_truth_cycle_frequency": 10,
+        "batches_and_cycle_to_skip": {"batch1": 0, "batch9":0}
+    },
     "model_config": {
-        "encoder_input_signals": ["Current", "Sensor Voltage"],
+        "encoder_input_signals": ["Current", "Voltage"],
         "decoder_input_signals": ["Current"],
         "data_scaling": false,
         "signals_to_scale": ["accumulated_time_bins", "accumulated_transitions", "previous_capacity"],
-        "output_signal": ["Sensor Voltage"],
+        "output_signal": ["Voltage"],
         "sampling_frequency": 1,
         "trained_model": false,
         "monitor": "loss"
     },
     "model_specifications": {
         "epochs": 1000,
-        "batch_size": 32,
-        "val_train_split_ratio": 0.2,
+        "batch_size": 128,
+        "test_train_cells_ratio": 0.3,
+        "val_train_cycles_ratio": 0.2,
         "encoder_input_seq": 50,
         "decoder_input_seq": 1000,
         "second_stage_encoder_max_input_seq": 200,
@@ -121,20 +84,20 @@
     },
     "time_bins": {
         "voltage_bins": [
-            [3, 3.5],
-            [3.5, 4],
-            [4, 4.5]
-            ],
+            [1.9, 3],
+            [3, 3.6],
+            [3.6, 4]
+        ],
         "current_bins": [
             [-4, -2],
             [-2, 0],
             [0, 2],
-            [2, 4]
-            ],
+            [2, 6]
+        ],
         "temperature_bins": [
-            [-10, 5],
-            [5, 40],
-            [40, 90]
+            [25, 30],
+            [30, 35],
+            [35, 40]
         ]
     }
 }
