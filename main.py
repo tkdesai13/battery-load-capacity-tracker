@@ -1,6 +1,3 @@
-# Description: This file is the main entry point for the project.
-# It reads the configuration file, extracts data, and processes it.
-
 import os
 import numpy as np
 import tensorflow as tf
@@ -11,102 +8,91 @@ from data.data_processing import DataProcessor
 from models.model import Model
 from plot.model_evaluation import ModelEvaluator
 
-# reproducibility
-# Set seeds
-np.random.seed(42)
-tf.random.set_seed(42)
-random.seed(42)
 
-# Ignore warnings
-warnings.filterwarnings("ignore")
+# Set random seeds for reproducibility
+def set_seeds(seed=42):
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    random.seed(seed)
 
-# Open the JSON Configuration file
-with open('config.json', 'r') as json_file:
-    config = json.load(json_file)
 
-# Construct the path for experiment-specific results
-experiment_result_dir = os.path.join(config['paths']['result'], config['experiment_name'])
+# Load configuration from a JSON file
+def load_config(config_path='config.json'):
+    with open(config_path, 'r') as json_file:
+        return json.load(json_file)
 
-# Ensure the directory exists, and create it if it doesn't
-if not os.path.exists(experiment_result_dir):
-    os.makedirs(experiment_result_dir)
 
-# data Extraction for Model training
-print("Start: Data extraction and Processing")
+# Create a directory for experiment results
+def create_experiment_dir(config):
+    experiment_result_dir = os.path.join(config['paths']['result'], config['experiment_name'])
+    if not os.path.exists(experiment_result_dir):
+        os.makedirs(experiment_result_dir)
+    return experiment_result_dir
 
-# Initialize the DataProcessor class
-data_processing = DataProcessor(config=config)
 
-# Load and preprocess the data cell by cell
-time_bins_and_transition_data = data_processing.load_and_binning_data()
+def main():
+    # Ignore warnings
+    warnings.filterwarnings("ignore")
+    set_seeds()
 
-# prepare the scalar or vector features
-if config['scalar_vector_exp_flag'] == 'scalar':
-    time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(
-        time_bins_and_transition_data)
-else:
-    time_bins_and_transition_data, min_max_values = data_processing.prepare_vector_features(
-        time_bins_and_transition_data)
+    # Load configuration
+    config = load_config()
+    experiment_result_dir = create_experiment_dir(config)
 
-# get the min/max and scale the data
-scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
+    # Initialize data processing
+    data_processing = DataProcessor(config=config)
+    time_bins_and_transition_data = data_processing.load_and_binning_data()
 
-# shuffle and split the data
-shuffled_and_split_data, test_cells_id = data_processing.shuffle_and_split_data(scaled_data)
-
-# Initialize the Model class
-model = Model(config=config)
-
-# plot the results for training and testing data, save error metrics
-model_evaluator = ModelEvaluator(config=config)
-
-# Build and train the model or load the trained model
-if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
-    model.load_model(exp_path=config['paths']['trained_model'])
-else:
+    # Prepare features based on the experiment flag
     if config['scalar_vector_exp_flag'] == 'scalar':
-        no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
-
-        model.build_scalar_model(no_of_input_features=no_of_input_features)
-
-        # Train the model
-        model.train_model(train_data=shuffled_and_split_data['train'],
-                          val_data=shuffled_and_split_data['validation'])
-
-        model_evaluator.evaluate_model(model=model.model,
-                                       data=scaled_data,
-                                       min_max_values=min_max_values,
-                                       test_cells=test_cells_id)
-
+        time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(
+            time_bins_and_transition_data)
     else:
-        max_sequence_length = min_max_values['max_transitions']
-        no_of_input_features = len(data_processing.bin_mapping)
+        time_bins_and_transition_data, min_max_values = data_processing.prepare_vector_features(
+            time_bins_and_transition_data)
 
-        model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+    # Scale data and split into training and testing sets
+    scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
+    shuffled_and_split_data, test_cells_id = data_processing.shuffle_and_split_data(scaled_data)
 
-        # Train the model
-        model.train_vector_model(train_data=shuffled_and_split_data['train'],
-                                 val_data=shuffled_and_split_data['validation'],
-                                 max_sequence_length=max_sequence_length)
+    # Initialize model and evaluator
+    model = Model(config=config)
+    model_evaluator = ModelEvaluator(config=config)
 
-        model_evaluator.evaluate_model(model=model.model,
-                                       data=scaled_data,
-                                       min_max_values=min_max_values,
-                                       max_sequence_length=max_sequence_length,
-                                       test_cells=test_cells_id)
+    # Load or build and train the model based on configuration
+    if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
+        model.load_model(exp_path=config['paths']['trained_model'])
+    else:
+        if config['scalar_vector_exp_flag'] == 'scalar':
+            no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
+            model.build_scalar_model(no_of_input_features=no_of_input_features)
+            model.train_model(train_data=shuffled_and_split_data['train'],
+                              val_data=shuffled_and_split_data['validation'])
+            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                           test_cells=test_cells_id)
+        else:
+            max_sequence_length = int(min_max_values['max_transitions'])
+            no_of_input_features = len(data_processing.bin_mapping)
+            model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+            model.train_vector_model(train_data=shuffled_and_split_data['train'],
+                                     val_data=shuffled_and_split_data['validation'],
+                                     max_sequence_length=max_sequence_length)
+            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                           max_sequence_length=max_sequence_length, test_cells=test_cells_id)
 
-# Adding min-max values to the configuration file
-config['min_max_values'] = min_max_values
+    # Save updated configuration with min_max_values
+    config['min_max_values'] = min_max_values
+    with open(os.path.join(experiment_result_dir, 'config.json'), 'w') as json_file:
+        json.dump(config, json_file, indent=4)
 
-# save the configuration file
-with open(os.path.join(experiment_result_dir, 'config.json'), 'w') as json_file:
-    json.dump(config, json_file, indent=4)
+    # Print bin mapping and intervals
+    bin_mapping = data_processing.get_bin_mapping()
+    print("Bin mapping:", bin_mapping)
+    v_bin, c_bin, t_bin = bin_mapping[0]
+    intervals = data_processing.get_bin_intervals(v_bin, c_bin, t_bin)
+    print(f"Voltage Interval: {intervals[0]}, Current Interval: {intervals[1]}, Temperature Interval: {intervals[2]}")
+    print("Experiment Completed!")
 
-# Get bin mappings if needed
-bin_mapping = data_processing.get_bin_mapping()
-print("Bin mapping:", bin_mapping)
 
-# Example: Retrieve bin intervals for a specific bin
-v_bin, c_bin, t_bin = bin_mapping[0]  # Example: get the first bin intervals
-intervals = data_processing.get_bin_intervals(v_bin, c_bin, t_bin)
-print(f"Voltage Interval: {intervals[0]}, Current Interval: {intervals[1]}, Temperature Interval: {intervals[2]}")
+if __name__ == "__main__":
+    main()

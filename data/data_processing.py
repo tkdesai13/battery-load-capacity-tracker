@@ -404,7 +404,7 @@ class DataProcessor:
                 all_cell_target_feature_data[cell_type][cell_name] = {}
                 previous_capacity = self.config['nominal_capacity']  # Starting with nominal capacity
 
-                for cycle_no, cycle_data in sorted(cell_data.items()):
+                for cycle_no, cycle_data in cell_data.items():
                     cycle_features = self._process_cycle_data(
                         cycle_data, previous_capacity, min_max_values, time_bins_min_zero_set, transitions_min_zero_set
                     )
@@ -476,7 +476,8 @@ class DataProcessor:
             'accumulated_time_bins': cycle_accumulated_time_bins,
             'accumulated_transitions': cycle_transition_counts,
             'capacity': current_capacity,
-            'date': cycle_data['ground_truth_cycle']['date'],
+            'cumulative_time_at_ground_truth': cycle_data['cumulative_time_at_ground_truth'],
+            'cycle_no': cycle_data['ground_truth_cycle']['cycle_no'],
             'capacity_diff': capacity_diff,
             'previous_capacity': previous_capacity
         }
@@ -778,7 +779,8 @@ class DataProcessor:
         # Returning the structured data for training and testing
         return train_test_data
 
-    def shuffle_and_split_data(self, scaled_data: Dict[str, Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
+    def shuffle_and_split_data(self, scaled_data: Dict[str, Dict[str, Dict[str, Any]]]) -> (
+            Tuple)[Dict[str, Dict[str, Any]], List[str]]:
         """
         Split data into train, validation, and test sets based on cell and cycle data.
 
@@ -825,7 +827,7 @@ class DataProcessor:
             self._add_cycles_to_split(split_data, "train", train_cycles)
             self._add_cycles_to_split(split_data, "validation", val_cycles)
 
-        return split_data, test_cells
+        return split_data, list(split_data['test'].keys())
 
     def _split_test_cells(self, cell_names: List[str]) -> Tuple[List[str], List[str]]:
         """

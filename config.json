@@ -1,6 +1,6 @@
 {
-    "experiment_name": "V1000E_001l_B128_30T",
-    "scalar_vector_exp_flag": "vector",
+    "experiment_name": "S1000E_MV_005l_B128_30T",
+    "scalar_vector_exp_flag": "scalar",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/all_data",
@@ -55,7 +55,7 @@
         "output_signal": ["Voltage"],
         "sampling_frequency": 1,
         "trained_model": false,
-        "monitor": "loss"
+        "monitor": "val_loss"
     },
     "model_specifications": {
         "epochs": 1000,
@@ -67,7 +67,7 @@
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
         "early_stopping_patience": 200,
-        "learning_rate": 0.001,
+        "learning_rate": 0.005,
         "decay_steps": 10,
         "decay_rate": 1.0,
         "weights_logging_freq_epochs": 20,

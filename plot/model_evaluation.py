@@ -262,7 +262,7 @@ class ModelEvaluator:
 
             # Plot for dq
             p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dQ',
-                          x_axis_label='Date',
+                          x_axis_label='Cycle number',
                           y_axis_label='dQ (Ah)',
                           width=400,
                           height=400)
