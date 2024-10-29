@@ -45,6 +45,7 @@ class ModelEvaluator:
         # Iterate over train and test cells and accumulate predictions
         for split_type, split_cells in cell_types.items():
             predictions = {}
+            cell_metrics = {}
 
             # Iterate through the data batches and process each cell
             for batch in data.keys():
@@ -53,13 +54,14 @@ class ModelEvaluator:
                         cell_data = data[batch][cell]
 
                         # Evaluate the model for this single cell
-                        predictions[cell], cell_metrics = self._evaluate_single_cell(model, cell_data, min_max_values,
+                        predictions[cell], cell_metrics[cell] = self._evaluate_single_cell(model, cell_data, min_max_values,
                                                                                      max_sequence_length)
 
                         # Combine predictions and metrics for the individual cell
                         combined_data = {
-                            'predictions': predictions[cell],
-                            'metrics': cell_metrics
+                            'metrics': cell_metrics[cell],
+                            'predictions': predictions[cell]
+
                         }
 
                         # Accumulate actual, predicted values, dq values, and dates
@@ -80,7 +82,7 @@ class ModelEvaluator:
                 json.dump(metrics, f, indent=4)
 
             # Plot the results for this split type
-            self._plot_results(predictions, f'{split_type}_results.html')
+            self._plot_results(predictions, cell_metrics, f'{split_type}_results.html')
 
         return aggregated_predictions
 
@@ -98,8 +100,12 @@ class ModelEvaluator:
         previous_capacity_all_cycle_cells = np.array(
             [cycle_data['previous_capacity'] for cycle_no, cycle_data in cell_data.items()])
 
+        cumulative_time_at_ground_truth_all_cells = np.array(
+            [cycle_data['cumulative_time_at_ground_truth'] for cycle_no, cycle_data in cell_data.items()])
+
         # Ensure that previous_capacity_all_cycle_cells is correctly shaped as (N, 1) where N is the number of cycles
         previous_capacity_all_cycle_cells = previous_capacity_all_cycle_cells.reshape(-1, 1)
+        cumulative_time_at_ground_truth = cumulative_time_at_ground_truth_all_cells.reshape(-1,1)
 
         # Extract time bins and previous_capacity for all cycles
         if self.config['scalar_vector_exp_flag'] == 'scalar':
@@ -108,7 +114,8 @@ class ModelEvaluator:
 
             # Predicted dq values using the model, pass both inputs in a list
             dq_predict = model.predict([timebins_all_cycle_cells, previous_capacity_all_cycle_cells]).flatten()
-        else:
+
+        elif self.config['scalar_vector_exp_flag'] == 'vector':
             timebins_all_cycle_cells = np.array(
                 [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()])
 
@@ -119,6 +126,48 @@ class ModelEvaluator:
             # Predicted dq values using the model, pass both inputs in a list
             dq_predict = model.predict([tf.convert_to_tensor(padded_train_timebins),
                                         tf.convert_to_tensor(previous_capacity_all_cycle_cells)]).flatten()
+
+        else:
+            # Third case: Adjusted to align with model's inputs
+            # Extract bin indices and time spent for all cycles
+            bin_indices_all_cycle_cells = np.array(
+                [list(cycle_data['bin_indices']) for cycle_no, cycle_data in cell_data.items()]
+            )
+
+            time_spent_all_cycle_cells = np.array(
+                [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()]
+            )
+
+            # Pad the bin_indices sequences
+            padded_bin_indices = pad_sequences(
+                bin_indices_all_cycle_cells,
+                maxlen=max_sequence_length,
+                padding='post',
+                value=0  # Padding index for bin_indices
+            )
+
+            # Pad the time_spent sequences
+            padded_time_spent = pad_sequences(
+                time_spent_all_cycle_cells,
+                maxlen=max_sequence_length,
+                padding='post',
+                value=0.0  # Padding value for time_spent
+            )
+
+            # Optionally, scale previous_capacity and time_spent if scaling was applied during training
+            # Example (uncomment and adjust if necessary):
+            # previous_capacity_all_cycle_cells = self.scaler_prev_capacity.transform(previous_capacity_all_cycle_cells)
+            # padded_time_spent = self.scaler_time_spent.transform(padded_time_spent)
+
+            # Prepare the inputs as dictionaries matching the model's input layer names
+            inputs = {
+                'bin_index_input': padded_bin_indices.astype('int32'),  # Shape: (batch_size, max_sequence_length)
+                'time_spent_input': padded_time_spent.astype('float32'),  # Shape: (batch_size, max_sequence_length)
+                'previous_capacity_input': previous_capacity_all_cycle_cells.astype('float32')  # Shape: (batch_size, 1)
+            }
+
+            # Predict dq values using the model
+            dq_predict = model.predict(inputs).flatten()
 
         # Actual dq values
         dq_actual = np.array([cycle_data['capacity_diff'] for cycle_no, cycle_data in cell_data.items()])
@@ -158,8 +207,9 @@ class ModelEvaluator:
             },
             'dq_metrics': {
                 'rmse': np.sqrt(mean_squared_error(dq_actual, dq_predict)),
+                'crmse': np.sqrt(np.mean(((dq_actual - dq_predict) / q_actual) ** 2)) * 100,
                 'mae': mean_absolute_error(dq_actual, dq_predict),
-                'mape': np.mean(np.abs((dq_actual - dq_predict) / dq_actual)) * 100,
+                'mape': np.mean(np.abs((dq_actual - dq_predict) / q_actual)) * 100,
                 'r2': r2_score(dq_actual, dq_predict),
                 'mse': mean_squared_error(dq_actual, dq_predict)
             }
@@ -189,8 +239,9 @@ class ModelEvaluator:
             },
             'dq_metrics': {
                 'rmse': np.sqrt(mean_squared_error(dq_actual, dq_predict)),
+                'crmse': np.sqrt(np.mean(((dq_actual - dq_predict) / q_actual) ** 2)) * 100,
                 'mae': mean_absolute_error(dq_actual, dq_predict),
-                'mape': np.mean(np.abs((dq_actual - dq_predict) / dq_actual)) * 100,
+                'mape': np.mean(np.abs((dq_actual - dq_predict) / q_actual)) * 100,
                 'r2': r2_score(dq_actual, dq_predict),
                 'mse': mean_squared_error(dq_actual, dq_predict)
             }
@@ -209,7 +260,7 @@ class ModelEvaluator:
         with open(filepath, 'w') as f:
             json.dump(predictions, f, indent=4)
 
-    def _plot_results(self, predictions: Dict[str, Any], output_filename: str):
+    def _plot_results(self, predictions: Dict[str, Any], cell_metrics: Dict[str, Any], output_filename: str):
         """
         Plot the predictions versus actual values using Bokeh and save the results.
 
@@ -218,6 +269,15 @@ class ModelEvaluator:
         """
         plots = []
         for cell, cell_predictions in predictions.items():
+
+            # cell metrics
+            cell_q_rmse = cell_metrics[cell]['q_metrics']['rmse']
+            cell_q_mape = cell_metrics[cell]['q_metrics']['mape']
+            cell_dq_rmse = cell_metrics[cell]['dq_metrics']['rmse']
+            cell_dq_crmse = cell_metrics[cell]['dq_metrics']['crmse']
+            cell_dq_mae = cell_metrics[cell]['dq_metrics']['mae']
+            cell_dq_mape = cell_metrics[cell]['dq_metrics']['mape']
+
             source_q = ColumnDataSource(data=dict(
                 x=cell_predictions['cycle_no'],
                 y_actual=cell_predictions['q_actual'],
@@ -231,7 +291,7 @@ class ModelEvaluator:
             ))
 
             # Plot for capacity (q)
-            p_q = figure(title=f'Cell {cell} - Predicted vs. Actual Capacity (Q)',
+            p_q = figure(title=f'Cell {cell} - RMSE:{cell_q_rmse:.4f}, MAPE:{cell_q_mape:.4f}',
                          x_axis_label='Cyele Number',
                          y_axis_label='Capacity (Ah)',
                          width=400,
@@ -248,7 +308,7 @@ class ModelEvaluator:
             max_q = max(max(cell_predictions['q_actual']), max(cell_predictions['q_predict']))
             min_q = min(min(cell_predictions['q_actual']), min(cell_predictions['q_predict']))
 
-            regression_q = figure(width=400, height=400, title=f'Cell {cell} - Actual Q vs. Predicted Q',
+            regression_q = figure(width=400, height=400, title=f'Cell {cell}',
                                   x_axis_label='Actual Q (Ah)', y_axis_label='Predicted Q (Ah)',
                                   x_range=(min_q, max_q), y_range=(min_q, max_q))
 
@@ -261,7 +321,7 @@ class ModelEvaluator:
             regression_q.legend.location = 'top_left'
 
             # Plot for dq
-            p_dq = figure(title=f'Cell {cell} - Predicted vs. Actual dQ',
+            p_dq = figure(title=f'Cell {cell} - RMSE:{cell_dq_rmse:.4f}, CRMSE(%):{cell_dq_crmse:.4f}',
                           x_axis_label='Cycle number',
                           y_axis_label='dQ (Ah)',
                           width=400,
@@ -280,7 +340,7 @@ class ModelEvaluator:
             max_dq = max(max(cell_predictions['dq_actual']), max(cell_predictions['dq_predict']))
             min_dq = min(min(cell_predictions['dq_actual']), min(cell_predictions['dq_predict']))
 
-            regression_dq = figure(width=400, height=400, title=f'Cell {cell} - Actual dQ vs. Predicted dQ',
+            regression_dq = figure(width=400, height=400, title=f'Cell {cell} - MAE:{cell_dq_mae:.4f}, MAPE(%):{cell_dq_mape:.4f}',
                                    x_axis_label='Actual dQ (Ah)', y_axis_label='Predicted dQ (Ah)',
                                    x_range=(min_dq, max_dq), y_range=(min_dq, max_dq))
 

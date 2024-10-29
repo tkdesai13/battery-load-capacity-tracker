@@ -1,6 +1,6 @@
 {
-    "experiment_name": "S1000E_MV_005l_B128_30T",
-    "scalar_vector_exp_flag": "scalar",
+    "experiment_name": "check_TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
+    "scalar_vector_exp_flag": "vector_embed",
     "paths": {
         "trained_model": "",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/all_data",
@@ -58,7 +58,7 @@
         "monitor": "val_loss"
     },
     "model_specifications": {
-        "epochs": 1000,
+        "epochs": 1,
         "batch_size": 128,
         "test_train_cells_ratio": 0.3,
         "val_train_cycles_ratio": 0.2,
@@ -66,7 +66,7 @@
         "decoder_input_seq": 1000,
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
-        "early_stopping_patience": 200,
+        "early_stopping_patience": 100,
         "learning_rate": 0.005,
         "decay_steps": 10,
         "decay_rate": 1.0,

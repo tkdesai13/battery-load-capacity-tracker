@@ -164,7 +164,7 @@ class DataProcessor:
 
         # Iterate over all .pkl files in the data directory
         all_files = os.listdir(data_path)
-        for file_name in all_files:
+        for file_name in all_files[:1]:
             if file_name.endswith('.pkl'):
                 batch_no = self._extract_batch_number(file_name)  # Function to extract batch number from the file name
                 print(f"Processing batch {batch_no} from {file_name}")
@@ -622,6 +622,103 @@ class DataProcessor:
 
         return all_cell_target_feature_data, min_max_values
 
+    def prepare_vector_features_embedded(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Tuple[Dict, Dict]:
+        """
+        Prepare the data for training and testing by converting the scalar features to vectorized features.
+
+        :param preprocessed_data: The preprocessed data structured as a dictionary.
+        :return: The preprocessed data with vector features and min/max values.
+        """
+
+        # Initialize min/max trackers for all metrics
+        min_max_values = {
+            'capacity': {'min': float('inf'), 'max': float('-inf')},
+            'capacity_diff': {'min': float('inf'), 'max': float('-inf')},
+            'previous_capacity': {'min': float('inf'), 'max': float('-inf')},
+            'max_sequence_length': 0
+        }
+
+        # Initialize the final feature-label dictionary
+        all_cell_target_feature_data = {}
+
+        for cell_type, cells in preprocessed_data.items():
+
+            all_cell_target_feature_data[cell_type] = {}
+
+            for cell_name, cell_data in cells.items():
+                print(f"Preparing vector features for {cell_type}/{cell_name}")
+
+                all_cell_target_feature_data[cell_type][cell_name] = {}
+
+                previous_capacity = self.config['nominal_capacity']  # Start with nominal capacity
+
+                for cycle_no, cycle_data in cell_data.items():
+                    time_bins = cycle_data.get('accumulated_time_bins', [])
+                    transition_matrix = cycle_data.get('accumulated_transitions', {})
+
+                    # Generate bin indices and time spent sequences
+                    bin_indices, time_spent_values = self.generate_bin_index_and_time_sequences(time_bins)
+                    cell_data[cycle_no]['accumulated_transitions'] = transition_matrix
+
+                    # Update the max sequence length
+                    sequence_length = len(bin_indices)
+                    min_max_values['max_sequence_length'] = max(min_max_values['max_sequence_length'], sequence_length)
+
+                    current_capacity = cycle_data['ground_truth_cycle'].get('capacity', previous_capacity)
+                    # Calculate capacity difference
+                    capacity_diff = current_capacity - previous_capacity
+
+                    # Update min/max for capacity, capacity_diff, and previous_capacity
+                    min_max_values['capacity']['min'] = min(min_max_values['capacity']['min'], current_capacity)
+                    min_max_values['capacity']['max'] = max(min_max_values['capacity']['max'], current_capacity)
+                    min_max_values['capacity_diff']['min'] = min(min_max_values['capacity_diff']['min'], capacity_diff)
+                    min_max_values['capacity_diff']['max'] = max(min_max_values['capacity_diff']['max'], capacity_diff)
+                    min_max_values['previous_capacity']['min'] = min(min_max_values['previous_capacity']['min'],
+                                                                     previous_capacity)
+                    min_max_values['previous_capacity']['max'] = max(min_max_values['previous_capacity']['max'],
+                                                                     previous_capacity)
+
+                    # Feature-label dictionary
+                    all_cell_target_feature_data[cell_type][cell_name][cycle_no] = {
+                        'bin_indices': bin_indices,
+                        'accumulated_time_bins': time_spent_values,
+                        'accumulated_transitions': transition_matrix,
+                        'capacity': current_capacity,
+                        'cumulative_time_at_ground_truth': cycle_data['cumulative_time_at_ground_truth'],
+                        'cycle_no': cycle_data['ground_truth_cycle']['cycle_no'],
+                        'capacity_diff': capacity_diff,
+                        'previous_capacity': previous_capacity
+                    }
+
+                    previous_capacity = current_capacity
+
+        return all_cell_target_feature_data, min_max_values
+
+    def generate_bin_index_and_time_sequences(self, time_bins: List[Dict]) -> Tuple[List[int], List[float]]:
+        """
+        Generate sequences of bin indices and time spent values from time_bins data.
+
+        :param time_bins: A list of dictionaries with keys 'bin_index', 'time_spent', 'transition_index'.
+        :return: Two lists: bin_indices (List[int]) and time_spent (List[float]).
+        """
+        bin_indices = []
+        time_spent_values = []
+
+        # Reverse mapping from bin_mapping keys to bin indices
+        bin_mapping_index = {key: idx for idx, key in enumerate(self.bin_mapping.keys(), start=1)}  # Start from 1
+
+        for transition in time_bins:
+            bin_key = transition['bin_index']  # This is the bin key, a tuple like (0, 0, 0)
+            time_spent = transition['time_spent']
+
+            # Get the bin index (integer) corresponding to the bin key
+            bin_index = bin_mapping_index.get(bin_key, 0)  # Use 0 if bin_key is not found
+
+            bin_indices.append(bin_index)
+            time_spent_values.append(time_spent)
+
+        return bin_indices, time_spent_values
+
     def generate_transition_matrix(self, time_bins: dict) -> np.ndarray:
         """
         Generate a matrix of shape (no_of_transitions, no_of_bins) where each row corresponds to a transition
@@ -793,12 +890,14 @@ class DataProcessor:
 
         split_data = {
             "train": {
+                "bin_indices":[],
                 "timebins": [],
                 "previous_capacity": [],
                 "capacity_difference": [],
                 "cumulative_time_at_ground_truth": []
             },
             "validation": {
+                "bin_indices":[],
                 "timebins": [],
                 "previous_capacity": [],
                 "capacity_difference": [],
@@ -854,12 +953,14 @@ class DataProcessor:
 
         for cell in cell_names:
             for cycle_data in batch_cells[cell].values():
+                bin_indices = self._convert_to_list(cycle_data["bin_indices"])
                 accumulated_time_bins = self._convert_to_list(cycle_data["accumulated_time_bins"])
                 previous_capacity = cycle_data["previous_capacity"]
                 capacity_diff = cycle_data["capacity_diff"]
                 cumulative_time_at_ground_truth = cycle_data["cumulative_time_at_ground_truth"]
 
                 combined_cycles.append((
+                    bin_indices,
                     accumulated_time_bins,
                     previous_capacity,
                     capacity_diff,
@@ -893,7 +994,8 @@ class DataProcessor:
         :param cycles: List of cycle data tuples to add.
         """
         if cycles:
-            timebins, previous_capacity, capacity_difference, cumulative_time_at_ground_truth = zip(*cycles)
+            bin_indices, timebins, previous_capacity, capacity_difference, cumulative_time_at_ground_truth = zip(*cycles)
+            split_data[split_type]["bin_indices"].extend(bin_indices)
             split_data[split_type]["timebins"].extend(timebins)
             split_data[split_type]["previous_capacity"].extend(previous_capacity)
             split_data[split_type]["capacity_difference"].extend(capacity_difference)

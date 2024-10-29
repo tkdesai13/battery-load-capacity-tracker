@@ -15,12 +15,10 @@ def set_seeds(seed=42):
     tf.random.set_seed(seed)
     random.seed(seed)
 
-
 # Load configuration from a JSON file
 def load_config(config_path='config.json'):
     with open(config_path, 'r') as json_file:
         return json.load(json_file)
-
 
 # Create a directory for experiment results
 def create_experiment_dir(config):
@@ -29,9 +27,8 @@ def create_experiment_dir(config):
         os.makedirs(experiment_result_dir)
     return experiment_result_dir
 
-
 def main():
-    # Ignore warnings
+    # Ignore  warnings
     warnings.filterwarnings("ignore")
     set_seeds()
 
@@ -47,8 +44,11 @@ def main():
     if config['scalar_vector_exp_flag'] == 'scalar':
         time_bins_and_transition_data, min_max_values = data_processing.prepare_scalar_features(
             time_bins_and_transition_data)
-    else:
+    elif config['scalar_vector_exp_flag'] == 'vector':
         time_bins_and_transition_data, min_max_values = data_processing.prepare_vector_features(
+            time_bins_and_transition_data)
+    else:
+        time_bins_and_transition_data, min_max_values = data_processing.prepare_vector_features_embedded(
             time_bins_and_transition_data)
 
     # Scale data and split into training and testing sets
@@ -70,11 +70,20 @@ def main():
                               val_data=shuffled_and_split_data['validation'])
             model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
                                            test_cells=test_cells_id)
-        else:
+        elif config['scalar_vector_exp_flag'] == 'vector':
             max_sequence_length = int(min_max_values['max_transitions'])
             no_of_input_features = len(data_processing.bin_mapping)
             model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
             model.train_vector_model(train_data=shuffled_and_split_data['train'],
+                                     val_data=shuffled_and_split_data['validation'],
+                                     max_sequence_length=max_sequence_length)
+            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                           max_sequence_length=max_sequence_length, test_cells=test_cells_id)
+        else:
+            max_sequence_length = int(min_max_values['max_sequence_length'])
+            no_of_input_features = len(data_processing.bin_mapping)
+            model.build_vector_model_TCN(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+            model.train_vector_model_TCN(train_data=shuffled_and_split_data['train'],
                                      val_data=shuffled_and_split_data['validation'],
                                      max_sequence_length=max_sequence_length)
             model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
