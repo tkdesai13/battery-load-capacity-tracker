@@ -1,5 +1,5 @@
 {
-    "experiment_name": "check_TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
+    "experiment_name": "TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
     "scalar_vector_exp_flag": "vector_embed",
     "paths": {
         "trained_model": "",
@@ -58,7 +58,7 @@
         "monitor": "val_loss"
     },
     "model_specifications": {
-        "epochs": 1,
+        "epochs": 100,
         "batch_size": 128,
         "test_train_cells_ratio": 0.3,
         "val_train_cycles_ratio": 0.2,
