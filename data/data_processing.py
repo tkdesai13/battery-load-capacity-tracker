@@ -473,6 +473,7 @@ class DataProcessor:
 
         # Return cycle-specific feature data
         return {
+            'bin_indices': list(self.bin_mapping.keys()),
             'accumulated_time_bins': cycle_accumulated_time_bins,
             'accumulated_transitions': cycle_transition_counts,
             'capacity': current_capacity,
@@ -587,7 +588,7 @@ class DataProcessor:
                     min_max_values['max_transitions'] = max(min_max_values['max_transitions'], len(time_bins))
 
                     # Convert the scalar time bins to vectorized features
-                    vector_time_bins = self.generate_transition_matrix(time_bins)
+                    bin_indices, vector_time_bins = self.generate_transition_matrix(time_bins)
 
                     current_capacity = cycle_data['ground_truth_cycle'].get('capacity', previous_capacity)
                     # Calculate capacity difference
@@ -609,6 +610,7 @@ class DataProcessor:
 
                     # Feature-label dictionary
                     all_cell_target_feature_data[cell_type][cell_name][cycle_no] = {
+                        'bin_indices': bin_indices,
                         'accumulated_time_bins': vector_time_bins,
                         'accumulated_transitions': transition_matrix,
                         'capacity': current_capacity,
@@ -719,7 +721,7 @@ class DataProcessor:
 
         return bin_indices, time_spent_values
 
-    def generate_transition_matrix(self, time_bins: dict) -> np.ndarray:
+    def generate_transition_matrix(self, time_bins: dict) -> Tuple[List[int], np.ndarray]:
         """
         Generate a matrix of shape (no_of_transitions, no_of_bins) where each row corresponds to a transition
         and only the specific bin column has the time spent.
@@ -738,6 +740,8 @@ class DataProcessor:
         bin_mapping_index = {key: idx for idx, key in enumerate(self.bin_mapping.keys())}
 
         # Iterate over each transition and assign time_spent to the correct bin column
+
+        bin_indices = []
         for i, transition in enumerate(time_bins):
             bin_index = transition['bin_index']  # This is the bin key, a tuple like (0, 0, 0)
             time_spent = transition['time_spent']
@@ -746,8 +750,9 @@ class DataProcessor:
             if bin_index in bin_mapping_index:
                 column_idx = bin_mapping_index[bin_index]
                 matrix[i, column_idx] = time_spent
+                bin_indices.append(column_idx)
 
-        return matrix
+        return bin_indices, matrix
 
     def scale_data(self, all_cell_target_feature_data: Dict[str, Dict[str, Any]], min_max_values: Dict) -> Dict:
         """

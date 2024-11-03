@@ -121,7 +121,7 @@ class ModelEvaluator:
 
             # Pad the timebins sequences for both train and validation data
             padded_train_timebins = pad_sequences(timebins_all_cycle_cells, maxlen=max_sequence_length, padding='pre',
-                                                  dtype='float32')
+                                                  dtype='float32', value=999999.0)
 
             # Predicted dq values using the model, pass both inputs in a list
             dq_predict = model.predict([tf.convert_to_tensor(padded_train_timebins),
@@ -151,7 +151,8 @@ class ModelEvaluator:
                 time_spent_all_cycle_cells,
                 maxlen=max_sequence_length,
                 padding='post',
-                value=0.0  # Padding value for time_spent
+                value=0.0,  # Padding value for time_spent
+                dtype='float32'
             )
 
             # Optionally, scale previous_capacity and time_spent if scaling was applied during training

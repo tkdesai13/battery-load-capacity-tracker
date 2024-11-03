@@ -67,8 +67,10 @@ class Model:
         masked_timebins = tf.keras.layers.Masking(mask_value=999999.0)(timebins_input)
 
         # Apply 1D Convolution
-        x = tf.keras.layers.Conv1D(filters=2, kernel_size=100, strides=4, activation='relu')(masked_timebins)
-        x = tf.keras.layers.Conv1D(filters=4, kernel_size=50, strides=1, activation='relu')(x)
+        x = tf.keras.layers.Conv1D(filters=2, kernel_size=5, strides=4, activation='tanh')(masked_timebins)
+        x = tf.keras.layers.Conv1D(filters=4, kernel_size=10, strides=1, activation='tanh')(x)
+        x = tf.keras.layers.Conv1D(filters=6, kernel_size=20, strides=1, activation='tanh')(x)
+        x = tf.keras.layers.Conv1D(filters=8, kernel_size=30, strides=1, activation='tanh')(x)
 
         # Apply max pooling
         # x = tf.keras.layers.MaxPooling1D(pool_size=2)(x)
@@ -127,8 +129,11 @@ class Model:
         # Apply masking to time_spent_input
         time_spent_masked = tf.keras.layers.Masking(mask_value=0.0)(time_spent_expanded)
 
-        # Multiply bin_embedding by time_spent_masked to incorporate time spent
-        scaled_embedding = tf.keras.layers.Multiply()([bin_embedding, time_spent_masked])
+        # Interaction via element-wise multiplication
+        interaction_features = tf.keras.layers.Multiply()([bin_embedding, time_spent_masked])
+
+        # Concatenate with original features
+        combined_features = tf.keras.layers.Concatenate()([bin_embedding, time_spent_masked, interaction_features])
 
         # TCN layer
         x = TCN(nb_filters=8,  # Number of filters
@@ -136,7 +141,7 @@ class Model:
                 dilations=[1, 2, 4, 8, 16, 32],  # Dilation rates
                 activation='relu',
                 padding='same',
-                use_skip_connections=True)(scaled_embedding)
+                use_skip_connections=True)(combined_features)
 
         # Input layer for previous capacity
         previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
@@ -294,14 +299,16 @@ class Model:
             train_data['timebins'],
             maxlen=max_sequence_length,
             padding='post',
-            value=0.0  # Padding value for time_spent
+            value=0.0, # Padding value for time_spent
+            dtype='float32'
         )
 
         padded_val_time_spent = pad_sequences(
             val_data['timebins'],
             maxlen=max_sequence_length,
             padding='post',
-            value=0.0  # Padding value for time_spent
+            value=0.0,
+            dtype='float32' # Padding value for time_spent
         )
 
         # Convert previous_capacity to numpy arrays and reshape to (batch_size, 1)
@@ -374,4 +381,5 @@ class Model:
         Load a saved model from the configured directory.
         """
         trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.h5')
-        self.model = tf.keras.models.load_model(trained_model_path)
+        # self.model = tf.keras.models.load_model(trained_model_path)
+        self.model.load_weights(trained_model_path)

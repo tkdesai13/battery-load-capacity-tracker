@@ -60,8 +60,13 @@ def main():
     model_evaluator = ModelEvaluator(config=config)
 
     # Load or build and train the model based on configuration
-    if config['model_config']['trained_model'] == 'True' and config['paths']['trained_model'] != '':
+    if config['model_config']['trained_model'] == True and config['paths']['trained_model'] != '':
+        max_sequence_length = int(min_max_values['max_sequence_length'])
+        no_of_input_features = len(data_processing.bin_mapping)
+        model.build_vector_model_TCN(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
         model.load_model(exp_path=config['paths']['trained_model'])
+        model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                       max_sequence_length=max_sequence_length, test_cells=test_cells_id)
     else:
         if config['scalar_vector_exp_flag'] == 'scalar':
             no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
