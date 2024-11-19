@@ -1,7 +1,8 @@
 import os
 import json
 import tensorflow as tf
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+import keras
+from keras.preprocessing.sequence import pad_sequences
 import numpy as np
 from typing import Dict, Any
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -116,8 +117,7 @@ class ModelEvaluator:
             dq_predict = model.predict([timebins_all_cycle_cells, previous_capacity_all_cycle_cells]).flatten()
 
         elif self.config['scalar_vector_exp_flag'] == 'vector':
-            timebins_all_cycle_cells = np.array(
-                [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()])
+            timebins_all_cycle_cells = [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()]
 
             # Pad the timebins sequences for both train and validation data
             padded_train_timebins = pad_sequences(timebins_all_cycle_cells, maxlen=max_sequence_length, padding='pre',
@@ -130,13 +130,9 @@ class ModelEvaluator:
         else:
             # Third case: Adjusted to align with model's inputs
             # Extract bin indices and time spent for all cycles
-            bin_indices_all_cycle_cells = np.array(
-                [list(cycle_data['bin_indices']) for cycle_no, cycle_data in cell_data.items()]
-            )
+            bin_indices_all_cycle_cells = [list(cycle_data['bin_indices']) for cycle_no, cycle_data in cell_data.items()]
 
-            time_spent_all_cycle_cells = np.array(
-                [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()]
-            )
+            time_spent_all_cycle_cells = [list(cycle_data['accumulated_time_bins']) for cycle_no, cycle_data in cell_data.items()]
 
             # Pad the bin_indices sequences
             padded_bin_indices = pad_sequences(

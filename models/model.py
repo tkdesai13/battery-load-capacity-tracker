@@ -1,10 +1,11 @@
 import os
 import numpy as np
 import tensorflow as tf
+import keras
 from tcn import TCN
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistributed, Masking, Flatten, Dropout
-from tensorflow.keras.models import Model
+from keras.preprocessing.sequence import pad_sequences
+from keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistributed, Masking, Flatten, Dropout
+from keras.models import Model
 from typing import Dict, Any
 
 class Model:
@@ -31,24 +32,24 @@ class Model:
         """
 
         # Define input layers
-        timebins_input = tf.keras.layers.Input(shape=(no_of_input_features,), name='timebins_input')
-        previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
+        timebins_input = keras.layers.Input(shape=(no_of_input_features,), name='timebins_input')
+        previous_capacity_input = keras.layers.Input(shape=(1,), name='previous_capacity_input')
 
         # Concatenate the inputs
-        concatenated = tf.keras.layers.Concatenate()([timebins_input, previous_capacity_input])
+        concatenated = keras.layers.Concatenate()([timebins_input, previous_capacity_input])
 
         # Define the model architecture
-        x = tf.keras.layers.Dense(64, activation='tanh')(concatenated)
-        x = tf.keras.layers.Dense(32, activation='tanh')(x)
-        output = tf.keras.layers.Dense(1, activation='linear')(x)
+        x = keras.layers.Dense(64, activation='tanh')(concatenated)
+        x = keras.layers.Dense(32, activation='tanh')(x)
+        output = keras.layers.Dense(1, activation='linear')(x)
 
         # Build the model
-        self.model = tf.keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
+        self.model = keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
 
         # Compile the model
         type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(optimizer=optimizer,
                            loss=type_of_loss,
                            metrics=['mean_absolute_error', 'mean_squared_error'])
@@ -63,11 +64,11 @@ class Model:
         """
 
         # Define input layer for timebins with fixed length (after padding externally)
-        timebins_input = tf.keras.layers.Input(shape=(max_sequence_length, no_of_input_features),
+        timebins_input = keras.layers.Input(shape=(max_sequence_length, no_of_input_features),
                                                name='timebins_input')
 
         # Mask the padded values (assuming padded values are 0.0)
-        masked_timebins = tf.keras.layers.Masking(mask_value=0.0)(timebins_input)
+        masked_timebins = keras.layers.Masking(mask_value=0.0)(timebins_input)
 
         # Adjusted TCN layer with increased receptive field and stacked layers
         # x = TCN(nb_filters=4,  # Number of filters
@@ -81,35 +82,35 @@ class Model:
         #         return_sequences=False)(masked_timebins)
 
         # Apply 1D Convolution - Layer 1
-        x = tf.keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh')(masked_timebins)
-        x = tf.keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh')(x)
-        x = tf.keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh')(x)
-        x = tf.keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh')(x)
+        x = keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh')(masked_timebins)
+        x = keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh')(x)
+        x = keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh')(x)
+        x = keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh')(x)
 
         # Apply max pooling
-        # x = tf.keras.layers.MaxPooling1D(pool_size=2)(x)
+        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
 
         # Flatten the output of the CNN to feed into dense layers
-        x = tf.keras.layers.Flatten()(x)
+        x = keras.layers.Flatten()(x)
 
         # Define the input layer for previous capacity (shape = (1,))
-        previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
+        previous_capacity_input = keras.layers.Input(shape=(1,), name='previous_capacity_input')
 
         # Concatenate the flattened CNN output with the previous_capacity_input
-        concatenated = tf.keras.layers.Concatenate()([x, previous_capacity_input])
+        concatenated = keras.layers.Concatenate()([x, previous_capacity_input])
 
         # Define dense layers after concatenation
 
         # Dense layers with regularization
-        x = tf.keras.layers.Dense(5, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(
+        x = keras.layers.Dense(5, activation='tanh', kernel_regularizer=keras.regularizers.l2(0.00))(
             concatenated)
-        x = tf.keras.layers.Dropout(0.0)(x)
-        x = tf.keras.layers.Dense(3, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(x)
-        x = tf.keras.layers.Dropout(0.0)(x)
-        output = tf.keras.layers.Dense(1, activation='linear')(x)
+        x = keras.layers.Dropout(0.0)(x)
+        x = keras.layers.Dense(3, activation='tanh', kernel_regularizer=keras.regularizers.l2(0.00))(x)
+        x = keras.layers.Dropout(0.0)(x)
+        output = keras.layers.Dense(1, activation='linear')(x)
 
         # Build the model
-        self.model = tf.keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
+        self.model = keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
 
         # Save model summary
         model_summary_path = os.path.join(self.model_dir, 'model_summary.txt')
@@ -119,7 +120,7 @@ class Model:
         # Compile the model
         type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(optimizer=optimizer,
                            loss=type_of_loss,
                            metrics=['mean_absolute_error', 'mean_squared_error'])
@@ -132,28 +133,28 @@ class Model:
         """
 
         # Input layer for bin indices (integer-encoded sequence)
-        bin_index_input = tf.keras.layers.Input(shape=(max_sequence_length,), name='bin_index_input')
+        bin_index_input = keras.layers.Input(shape=(max_sequence_length,), name='bin_index_input')
 
         # Input layer for time spent in bins
-        time_spent_input = tf.keras.layers.Input(shape=(max_sequence_length,), name='time_spent_input')
+        time_spent_input = keras.layers.Input(shape=(max_sequence_length,), name='time_spent_input')
 
         # Embedding layer for bin indices
         embedding_dim = self.config['model_config']['embedding_size']  # Adjust as needed
         input_dim = no_of_input_features+1  # 36 bins + 1 for padding (assuming bin indices from 1 to 36, padding index 0)
-        bin_embedding = tf.keras.layers.Embedding(input_dim=input_dim, output_dim=embedding_dim,
+        bin_embedding = keras.layers.Embedding(input_dim=input_dim, output_dim=embedding_dim,
                                                   input_length=max_sequence_length, mask_zero=True)(bin_index_input)
 
         # Reshape time_spent_input to (batch_size, max_sequence_length, 1)
-        time_spent_expanded = tf.keras.layers.Reshape((max_sequence_length, 1))(time_spent_input)
+        time_spent_expanded = keras.layers.Reshape((max_sequence_length, 1))(time_spent_input)
 
         # Apply masking to time_spent_input
-        time_spent_masked = tf.keras.layers.Masking(mask_value=0.0)(time_spent_expanded)
+        time_spent_masked = keras.layers.Masking(mask_value=0.0)(time_spent_expanded)
 
         # Interaction via element-wise multiplication
-        interaction_features = tf.keras.layers.Multiply()([bin_embedding, time_spent_masked])
+        interaction_features = keras.layers.Multiply()([bin_embedding, time_spent_masked])
 
         # Concatenate with original features
-        combined_features = tf.keras.layers.Concatenate()([bin_embedding, time_spent_masked, interaction_features])
+        combined_features = keras.layers.Concatenate()([bin_embedding, time_spent_masked, interaction_features])
 
         # # TCN layer
         # x = TCN(nb_filters=4,  # Number of filters
@@ -174,21 +175,21 @@ class Model:
                 return_sequences=False)(combined_features)
 
         # Input layer for previous capacity
-        previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
+        previous_capacity_input = keras.layers.Input(shape=(1,), name='previous_capacity_input')
 
         # Concatenate TCN output with previous_capacity_input
-        concatenated = tf.keras.layers.Concatenate()([x, previous_capacity_input])
+        concatenated = keras.layers.Concatenate()([x, previous_capacity_input])
 
         # Dense layers with regularization
-        x = tf.keras.layers.Dense(5, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(
+        x = keras.layers.Dense(5, activation='tanh', kernel_regularizer=keras.regularizers.l2(0.00))(
             concatenated)
-        x = tf.keras.layers.Dropout(0.0)(x)
-        x = tf.keras.layers.Dense(3, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(x)
-        x = tf.keras.layers.Dropout(0.0)(x)
-        output = tf.keras.layers.Dense(1, activation='linear')(x)
+        x = keras.layers.Dropout(0.0)(x)
+        x = keras.layers.Dense(3, activation='tanh', kernel_regularizer=keras.regularizers.l2(0.00))(x)
+        x = keras.layers.Dropout(0.0)(x)
+        output = keras.layers.Dense(1, activation='linear')(x)
 
         # Build the model
-        self.model = tf.keras.models.Model(
+        self.model = keras.models.Model(
             inputs=[bin_index_input, time_spent_input, previous_capacity_input],
             outputs=output
         )
@@ -201,7 +202,7 @@ class Model:
         # Compile the model
         type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(
             optimizer=optimizer,
             loss=type_of_loss,
@@ -257,7 +258,7 @@ class Model:
 
         # Incorporate initial Q into each time step
         # Expand initial Q to match encoder_timesteps
-        initial_Q_expanded = tf.keras.layers.RepeatVector(encoder_timesteps)(initial_Q_input)
+        initial_Q_expanded = keras.layers.RepeatVector(encoder_timesteps)(initial_Q_input)
         x = Concatenate(axis=-1)([x, initial_Q_expanded])  # Shape: (batch_size, encoder_timesteps, ... + 1)
 
         # ============================
@@ -322,7 +323,7 @@ class Model:
         # ============================
 
         learning_rate = self.config['model_specifications']['learning_rate']
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         model.compile(optimizer=optimizer,
                       loss='mean_squared_error',
                       metrics=['mean_absolute_error', 'mean_squared_error'])
@@ -350,19 +351,19 @@ class Model:
         :param val_data: A dictionary containing the validation features and target.
         """
         # Create callbacks for early stopping, TensorBoard logging, and model checkpoints
-        early_stopping = tf.keras.callbacks.EarlyStopping(
+        early_stopping = keras.callbacks.EarlyStopping(
             monitor=self.monitor_loss,
             patience=self.config['model_specifications']['early_stopping_patience'],
             restore_best_weights=True
         )
 
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(
+        tensorboard_callback = keras.callbacks.TensorBoard(
             log_dir=self.tensorboard_log_dir,
             histogram_freq=1
         )
 
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
+        model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -400,19 +401,19 @@ class Model:
 
 
         # Create callbacks for early stopping, TensorBoard logging, and model checkpoints
-        early_stopping = tf.keras.callbacks.EarlyStopping(
+        early_stopping = keras.callbacks.EarlyStopping(
             monitor=self.monitor_loss,
             patience=self.config['model_specifications']['early_stopping_patience'],
             restore_best_weights=True
         )
 
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(
+        tensorboard_callback = keras.callbacks.TensorBoard(
             log_dir=self.tensorboard_log_dir,
             histogram_freq=1
         )
 
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
+        model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -496,19 +497,19 @@ class Model:
         # For example, using StandardScaler or MinMaxScaler
 
         # Create callbacks for early stopping, TensorBoard logging, and model checkpoints
-        early_stopping = tf.keras.callbacks.EarlyStopping(
+        early_stopping = keras.callbacks.EarlyStopping(
             monitor=self.monitor_loss,
             patience=self.config['model_specifications']['early_stopping_patience'],
             restore_best_weights=True
         )
 
-        tensorboard_callback = tf.keras.callbacks.TensorBoard(
+        tensorboard_callback = keras.callbacks.TensorBoard(
             log_dir=self.tensorboard_log_dir,
             histogram_freq=1
         )
 
-        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
+        model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -543,6 +544,6 @@ class Model:
         """
         Load a saved model from the configured directory.
         """
-        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.h5')
-        # self.model = tf.keras.models.load_model(trained_model_path)
+        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.keras')
+        # self.model = keras.models.load_model(trained_model_path)
         self.model.load_weights(trained_model_path)
