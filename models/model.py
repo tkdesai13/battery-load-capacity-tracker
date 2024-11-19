@@ -1,8 +1,10 @@
+import os
+import numpy as np
 import tensorflow as tf
 from tcn import TCN
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-import os
-import numpy as np
+from tensorflow.keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistributed, Masking, Flatten, Dropout
+from tensorflow.keras.models import Model
 from typing import Dict, Any
 
 class Model:
@@ -44,10 +46,11 @@ class Model:
         self.model = tf.keras.models.Model(inputs=[timebins_input, previous_capacity_input], outputs=output)
 
         # Compile the model
+        type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(optimizer=optimizer,
-                           loss='mean_squared_error',
+                           loss=type_of_loss,
                            metrics=['mean_absolute_error', 'mean_squared_error'])
 
     def build_vector_model(self, max_sequence_length: int, no_of_input_features: int):
@@ -63,14 +66,25 @@ class Model:
         timebins_input = tf.keras.layers.Input(shape=(max_sequence_length, no_of_input_features),
                                                name='timebins_input')
 
-        # Mask the padded values (assuming padded values are 0)
-        masked_timebins = tf.keras.layers.Masking(mask_value=999999.0)(timebins_input)
+        # Mask the padded values (assuming padded values are 0.0)
+        masked_timebins = tf.keras.layers.Masking(mask_value=0.0)(timebins_input)
 
-        # Apply 1D Convolution
-        x = tf.keras.layers.Conv1D(filters=2, kernel_size=5, strides=4, activation='tanh')(masked_timebins)
-        x = tf.keras.layers.Conv1D(filters=4, kernel_size=10, strides=1, activation='tanh')(x)
-        x = tf.keras.layers.Conv1D(filters=6, kernel_size=20, strides=1, activation='tanh')(x)
-        x = tf.keras.layers.Conv1D(filters=8, kernel_size=30, strides=1, activation='tanh')(x)
+        # Adjusted TCN layer with increased receptive field and stacked layers
+        # x = TCN(nb_filters=4,  # Number of filters
+        #         kernel_size=20,  # Increased kernel size
+        #         nb_stacks=2,  # Number of stacks (layers)
+        #         dilations=[ 2, 4, 8, 16, 32, 64],  # Extended dilation rates
+        #         activation='relu',  # Activation function
+        #         padding='causal',  # Use causal padding
+        #         use_skip_connections=True,
+        #         dropout_rate=0.0,
+        #         return_sequences=False)(masked_timebins)
+
+        # Apply 1D Convolution - Layer 1
+        x = tf.keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh')(masked_timebins)
+        x = tf.keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh')(x)
+        x = tf.keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh')(x)
+        x = tf.keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh')(x)
 
         # Apply max pooling
         # x = tf.keras.layers.MaxPooling1D(pool_size=2)(x)
@@ -85,8 +99,13 @@ class Model:
         concatenated = tf.keras.layers.Concatenate()([x, previous_capacity_input])
 
         # Define dense layers after concatenation
-        x = tf.keras.layers.Dense(64, activation='tanh')(concatenated)
-        x = tf.keras.layers.Dense(32, activation='tanh')(x)
+
+        # Dense layers with regularization
+        x = tf.keras.layers.Dense(5, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(
+            concatenated)
+        x = tf.keras.layers.Dropout(0.0)(x)
+        x = tf.keras.layers.Dense(3, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(x)
+        x = tf.keras.layers.Dropout(0.0)(x)
         output = tf.keras.layers.Dense(1, activation='linear')(x)
 
         # Build the model
@@ -98,10 +117,11 @@ class Model:
             self.model.summary(print_fn=lambda x: f.write(x + '\n'))
 
         # Compile the model
+        type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(optimizer=optimizer,
-                           loss='mean_squared_error',
+                           loss=type_of_loss,
                            metrics=['mean_absolute_error', 'mean_squared_error'])
 
         return self.model
@@ -118,7 +138,7 @@ class Model:
         time_spent_input = tf.keras.layers.Input(shape=(max_sequence_length,), name='time_spent_input')
 
         # Embedding layer for bin indices
-        embedding_dim = 16  # Adjust as needed
+        embedding_dim = self.config['model_config']['embedding_size']  # Adjust as needed
         input_dim = no_of_input_features+1  # 36 bins + 1 for padding (assuming bin indices from 1 to 36, padding index 0)
         bin_embedding = tf.keras.layers.Embedding(input_dim=input_dim, output_dim=embedding_dim,
                                                   input_length=max_sequence_length, mask_zero=True)(bin_index_input)
@@ -135,13 +155,23 @@ class Model:
         # Concatenate with original features
         combined_features = tf.keras.layers.Concatenate()([bin_embedding, time_spent_masked, interaction_features])
 
-        # TCN layer
-        x = TCN(nb_filters=8,  # Number of filters
-                kernel_size=5,  # Kernel size
-                dilations=[1, 2, 4, 8, 16, 32],  # Dilation rates
-                activation='relu',
-                padding='same',
-                use_skip_connections=True)(combined_features)
+        # # TCN layer
+        # x = TCN(nb_filters=4,  # Number of filters
+        #         kernel_size=10,  # Kernel size
+        #         dilations=[1, 2, 4, 8, 16, 32,64],  # Dilation rates
+        #         activation='relu',
+        #         padding='same',
+        #         use_skip_connections=True)(combined_features)
+
+        x = TCN(nb_filters=4,  # Number of filters
+                kernel_size=20,  # Increased kernel size
+                nb_stacks=1,  # Number of stacks (layers)
+                dilations=[2, 4, 8, 16, 32, 64],  # Extended dilation rates
+                activation='relu',  # Activation function
+                padding='causal',  # Use causal padding
+                use_skip_connections=True,
+                dropout_rate=0.0,
+                return_sequences=False)(combined_features)
 
         # Input layer for previous capacity
         previous_capacity_input = tf.keras.layers.Input(shape=(1,), name='previous_capacity_input')
@@ -150,10 +180,10 @@ class Model:
         concatenated = tf.keras.layers.Concatenate()([x, previous_capacity_input])
 
         # Dense layers with regularization
-        x = tf.keras.layers.Dense(64, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(
+        x = tf.keras.layers.Dense(5, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(
             concatenated)
         x = tf.keras.layers.Dropout(0.0)(x)
-        x = tf.keras.layers.Dense(32, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(x)
+        x = tf.keras.layers.Dense(3, activation='tanh', kernel_regularizer=tf.keras.regularizers.l2(0.00))(x)
         x = tf.keras.layers.Dropout(0.0)(x)
         output = tf.keras.layers.Dense(1, activation='linear')(x)
 
@@ -169,14 +199,147 @@ class Model:
             self.model.summary(print_fn=lambda x: f.write(x + '\n'))
 
         # Compile the model
+        type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         self.model.compile(
             optimizer=optimizer,
-            loss='mean_squared_error',
+            loss=type_of_loss,
             metrics=['mean_absolute_error', 'mean_squared_error']
         )
 
+        return self.model
+
+    def build_sequence_to_sequence_model(self,
+                                         encoder_timesteps: int,
+                                         decoder_timesteps: int,
+                                         transitions: int,
+                                         bins: int,
+                                         no_of_input_features: int):
+        """
+        Build and compile a Sequence-to-Sequence model with Encoder-Decoder architecture.
+
+        :param encoder_timesteps: Number of time steps for the encoder (e.g., 10).
+        :param decoder_timesteps: Number of time steps for the decoder (e.g., 15).
+        :param transitions: Number of transitions in each U matrix.
+        :param bins: Number of bins in each U matrix.
+        :param no_of_input_features: Number of input features per U matrix (transitions * bins).
+        """
+
+        # ============================
+        # 1. Encoder Inputs
+        # ============================
+
+        # Input for U matrices in encoder
+        encoder_U_input = Input(shape=(encoder_timesteps, transitions * bins), name='encoder_U_input')
+
+        # Input for deltaQ in encoder
+        encoder_deltaQ_input = Input(shape=(encoder_timesteps, 1), name='encoder_deltaQ_input')
+
+        # Input for initial Q
+        initial_Q_input = Input(shape=(1,), name='initial_Q_input')
+
+        # Masking for encoder U input
+        encoder_U_masked = Masking(mask_value=0.0)(encoder_U_input)
+
+        # ============================
+        # 2. Encoder Convolutional Layers
+        # ============================
+
+        # Apply TimeDistributed Conv1D to process each U matrix
+        x = TimeDistributed(Conv1D(filters=16, kernel_size=3, activation='relu', padding='same'))(encoder_U_masked)
+        x = TimeDistributed(Conv1D(filters=32, kernel_size=3, activation='relu', padding='same'))(x)
+        x = TimeDistributed(Flatten())(x)  # Flatten to combine transitions and bins
+
+        # Concatenate deltaQ inputs
+        x = Concatenate(axis=-1)(
+            [x, encoder_deltaQ_input])  # Shape: (batch_size, encoder_timesteps, 32*transitions*bins + 1)
+
+        # Incorporate initial Q into each time step
+        # Expand initial Q to match encoder_timesteps
+        initial_Q_expanded = tf.keras.layers.RepeatVector(encoder_timesteps)(initial_Q_input)
+        x = Concatenate(axis=-1)([x, initial_Q_expanded])  # Shape: (batch_size, encoder_timesteps, ... + 1)
+
+        # ============================
+        # 3. Encoder Recurrent Layer
+        # ============================
+
+        encoder_lstm = LSTM(128, return_state=True, return_sequences=False)
+        encoder_outputs, state_h, state_c = encoder_lstm(x)
+        encoder_states = [state_h, state_c]
+
+        # ============================
+        # 4. Decoder Inputs
+        # ============================
+
+        # Input for U matrices in decoder
+        decoder_U_input = Input(shape=(decoder_timesteps, transitions * bins), name='decoder_U_input')
+
+        # Input for deltaQ in decoder (during training, use true deltaQ; during inference, use predicted deltaQ)
+        decoder_deltaQ_input = Input(shape=(decoder_timesteps, 1), name='decoder_deltaQ_input')
+
+        # Masking for decoder U input
+        decoder_U_masked = Masking(mask_value=0.0)(decoder_U_input)
+
+        # ============================
+        # 5. Decoder Convolutional Layers
+        # ============================
+
+        # Apply TimeDistributed Conv1D to process each U matrix in decoder
+        y = TimeDistributed(Conv1D(filters=16, kernel_size=3, activation='relu', padding='same'))(decoder_U_masked)
+        y = TimeDistributed(Conv1D(filters=32, kernel_size=3, activation='relu', padding='same'))(y)
+        y = TimeDistributed(Flatten())(y)  # Flatten to combine transitions and bins
+
+        # Concatenate deltaQ inputs
+        y = Concatenate(axis=-1)(
+            [y, decoder_deltaQ_input])  # Shape: (batch_size, decoder_timesteps, 32*transitions*bins + 1)
+
+        # ============================
+        # 6. Decoder Recurrent Layer
+        # ============================
+
+        decoder_lstm = LSTM(128, return_sequences=True, return_state=False)
+        decoder_outputs = decoder_lstm(y, initial_state=encoder_states)  # Use encoder states as initial states
+
+        # ============================
+        # 7. Output Layer
+        # ============================
+
+        # Predict deltaQ for each time step
+        deltaQ_pred = TimeDistributed(Dense(1, activation='linear'), name='deltaQ_output')(decoder_outputs)
+
+        # ============================
+        # 8. Building the Model
+        # ============================
+
+        # Define the model with encoder and decoder inputs
+        model = Model(inputs=[encoder_U_input, encoder_deltaQ_input, initial_Q_input,
+                              decoder_U_input, decoder_deltaQ_input],
+                      outputs=deltaQ_pred)
+
+        # ============================
+        # 9. Compile the Model
+        # ============================
+
+        learning_rate = self.config['model_specifications']['learning_rate']
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        model.compile(optimizer=optimizer,
+                      loss='mean_squared_error',
+                      metrics=['mean_absolute_error', 'mean_squared_error'])
+
+        # ============================
+        # 10. Save Model Summary
+        # ============================
+
+        model_summary_path = os.path.join(self.model_dir, 'model_summary.txt')
+        with open(model_summary_path, 'w') as f:
+            model.summary(print_fn=lambda x: f.write(x + '\n'))
+
+        # ============================
+        # 11. Return the Model
+        # ============================
+
+        self.model = model
         return self.model
 
     def train_model(self, train_data: Dict[str, Any], val_data: Dict[str, Any]):
@@ -230,9 +393,9 @@ class Model:
         """
 
         # Pad the timebins sequences for both train and validation data
-        padded_train_timebins = pad_sequences(train_data['timebins'], value=999999.0, maxlen=max_sequence_length, padding='pre',
+        padded_train_timebins = pad_sequences(train_data['timebins'], value=0.0, maxlen=max_sequence_length, padding='pre',
                                               dtype='float32')
-        padded_val_timebins = pad_sequences(val_data['timebins'], value=999999.0, maxlen=max_sequence_length, padding='pre',
+        padded_val_timebins = pad_sequences(val_data['timebins'], value=0.0, maxlen=max_sequence_length, padding='pre',
                                             dtype='float32')
 
 

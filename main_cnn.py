@@ -57,7 +57,7 @@ if config['model_config']['trained_model'] == 'True' and config['paths']['traine
     model.load_model(exp_path=config['paths']['trained_model'])
 else:
     input_features_size = len(shuffled_and_split_data['train_cells']['features'][0])
-    model.build_model(input_features_size=input_features_size)
+    model.build_scalar_model(input_features_size=input_features_size)
 
     # Train the model
     model.train_model(train_data=shuffled_and_split_data['train_cells'],
