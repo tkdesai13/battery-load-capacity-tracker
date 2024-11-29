@@ -1,8 +1,8 @@
 import os
 import json
 import tensorflow as tf
-import keras
-from keras.preprocessing.sequence import pad_sequences
+# from keras.preprocessing.sequence import pad_sequences
+from keras.utils import pad_sequences
 import numpy as np
 from typing import Dict, Any
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score

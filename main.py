@@ -87,7 +87,7 @@ def main():
         else:
             max_sequence_length = int(min_max_values['max_sequence_length'])
             no_of_input_features = len(data_processing.bin_mapping)
-            model.build_vector_model_TCN(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+            model.build_vector_model_embedded_convo(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
             model.train_vector_model_TCN(train_data=shuffled_and_split_data['train'],
                                      val_data=shuffled_and_split_data['validation'],
                                      max_sequence_length=max_sequence_length)

@@ -10,10 +10,10 @@ import scipy.io
 import numpy as np
 from collections import defaultdict
 from typing import Dict, Any, Tuple, List
-import torch
-import torch.nn as nn
-import torch_geometric
-from torch_geometric.data import Data
+# import torch
+# import torch.nn as nn
+# import torch_geometric
+# from torch_geometric.data import Data
 
 
 def matlab_struct_to_dict(matlab_struct: Any) -> dict:
@@ -1093,73 +1093,73 @@ class DataProcessor:
 
         return accumulated_data
 
-    def prepare_graph_data(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-        """
-        Prepare the data for training and testing by constructing graph data for each cycle.
-
-        :param preprocessed_data: The preprocessed data structured as a dictionary.
-        :return: A dictionary containing graph data for training and testing.
-        """
-
-        cycle_graph_data = {'train_cells': {}, 'test_cells': {}}
-
-        for cell_type, cells in preprocessed_data.items():
-            for cell_name, cell_data in cells.items():
-                print(f"Preparing graph data for {cell_type}/{cell_name}")
-
-                previous_cycle_capacity = self.config['nominal_capacity']
-
-                cycle_graph_data[cell_type][cell_name] = {}
-
-                for cycle_no, cycle_data in cell_data.items():
-                    graph = self.construct_graph_for_cycle(cycle_data, previous_cycle_capacity)
-                    cycle_graph_data[cell_type][cell_name][cycle_no] = graph
-
-                    # Update previous_cycle_capacity for the next iteration
-                    previous_cycle_capacity = cycle_data['ground_truth_cycle']['capacity']
-
-        return cycle_graph_data
-
-    def construct_graph_for_cycle(self, data_point: Dict[str, Any], previous_cycle_capacity: float) -> Data:
-        """
-        Construct a graph from the provided data point.
-
-        :param data_point: A dictionary containing accumulated time bins, transitions, and ground truth cycle data.
-        :param previous_cycle_capacity: The capacity from the previous cycle used as a global feature.
-        :return: A PyTorch Geometric Data object representing the graph.
-        """
-
-        # Nodes and their features (accumulated time in bins)
-        node_features = []
-        node_indices = []
-
-        for node, time_spent in data_point['accumulated_time_bins'].items():
-            node_features.append([time_spent])
-            node_indices.append(node)
-
-        node_features = torch.tensor(node_features, dtype=torch.float)
-
-        # Edges and their features (number of transitions)
-        edge_indices = []
-        edge_features = []
-
-        for (node_from, node_to), num_jumps in data_point['accumulated_transitions'].items():
-            edge_indices.append([node_indices.index(node_from), node_indices.index(node_to)])
-            edge_features.append([num_jumps])
-
-        edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
-        edge_attr = torch.tensor(edge_features, dtype=torch.float)
-
-        # Global feature: previous cycle's capacity
-        global_feat = torch.tensor([previous_cycle_capacity], dtype=torch.float)
-
-        # Target: capacity decay
-        current_cycle_capacity = data_point['ground_truth_cycle']['capacity']
-        capacity_decay = current_cycle_capacity - previous_cycle_capacity
-        y = torch.tensor([capacity_decay], dtype=torch.float)
-
-        # Create and return the Data object
-        return Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=y, global_feat=global_feat)
+    # def prepare_graph_data(self, preprocessed_data: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    #     """
+    #     Prepare the data for training and testing by constructing graph data for each cycle.
+    #
+    #     :param preprocessed_data: The preprocessed data structured as a dictionary.
+    #     :return: A dictionary containing graph data for training and testing.
+    #     """
+    #
+    #     cycle_graph_data = {'train_cells': {}, 'test_cells': {}}
+    #
+    #     for cell_type, cells in preprocessed_data.items():
+    #         for cell_name, cell_data in cells.items():
+    #             print(f"Preparing graph data for {cell_type}/{cell_name}")
+    #
+    #             previous_cycle_capacity = self.config['nominal_capacity']
+    #
+    #             cycle_graph_data[cell_type][cell_name] = {}
+    #
+    #             for cycle_no, cycle_data in cell_data.items():
+    #                 graph = self.construct_graph_for_cycle(cycle_data, previous_cycle_capacity)
+    #                 cycle_graph_data[cell_type][cell_name][cycle_no] = graph
+    #
+    #                 # Update previous_cycle_capacity for the next iteration
+    #                 previous_cycle_capacity = cycle_data['ground_truth_cycle']['capacity']
+    #
+    #     return cycle_graph_data
+    #
+    # def construct_graph_for_cycle(self, data_point: Dict[str, Any], previous_cycle_capacity: float) -> Data:
+    #     """
+    #     Construct a graph from the provided data point.
+    #
+    #     :param data_point: A dictionary containing accumulated time bins, transitions, and ground truth cycle data.
+    #     :param previous_cycle_capacity: The capacity from the previous cycle used as a global feature.
+    #     :return: A PyTorch Geometric Data object representing the graph.
+    #     """
+    #
+    #     # Nodes and their features (accumulated time in bins)
+    #     node_features = []
+    #     node_indices = []
+    #
+    #     for node, time_spent in data_point['accumulated_time_bins'].items():
+    #         node_features.append([time_spent])
+    #         node_indices.append(node)
+    #
+    #     node_features = torch.tensor(node_features, dtype=torch.float)
+    #
+    #     # Edges and their features (number of transitions)
+    #     edge_indices = []
+    #     edge_features = []
+    #
+    #     for (node_from, node_to), num_jumps in data_point['accumulated_transitions'].items():
+    #         edge_indices.append([node_indices.index(node_from), node_indices.index(node_to)])
+    #         edge_features.append([num_jumps])
+    #
+    #     edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
+    #     edge_attr = torch.tensor(edge_features, dtype=torch.float)
+    #
+    #     # Global feature: previous cycle's capacity
+    #     global_feat = torch.tensor([previous_cycle_capacity], dtype=torch.float)
+    #
+    #     # Target: capacity decay
+    #     current_cycle_capacity = data_point['ground_truth_cycle']['capacity']
+    #     capacity_decay = current_cycle_capacity - previous_cycle_capacity
+    #     y = torch.tensor([capacity_decay], dtype=torch.float)
+    #
+    #     # Create and return the Data object
+    #     return Data(x=node_features, edge_index=edge_index, edge_attr=edge_attr, y=y, global_feat=global_feat)
 
     def get_bin_mapping(self):
         """

@@ -2,8 +2,10 @@ import os
 import numpy as np
 import tensorflow as tf
 import keras
-from tcn import TCN
-from keras.preprocessing.sequence import pad_sequences
+# from tcn import TCN
+from keras.utils import pad_sequences
+# from keras.preprocessing.sequence import pad_sequences
+# from tensorflow.python.keras.preprocessing.sequence import pad_sequences
 from keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistributed, Masking, Flatten, Dropout
 from keras.models import Model
 from typing import Dict, Any
@@ -164,15 +166,15 @@ class Model:
         #         padding='same',
         #         use_skip_connections=True)(combined_features)
 
-        x = TCN(nb_filters=4,  # Number of filters
-                kernel_size=20,  # Increased kernel size
-                nb_stacks=1,  # Number of stacks (layers)
-                dilations=[2, 4, 8, 16, 32, 64],  # Extended dilation rates
-                activation='relu',  # Activation function
-                padding='causal',  # Use causal padding
-                use_skip_connections=True,
-                dropout_rate=0.0,
-                return_sequences=False)(combined_features)
+        # x = TCN(nb_filters=4,  # Number of filters
+        #         kernel_size=20,  # Increased kernel size
+        #         nb_stacks=1,  # Number of stacks (layers)
+        #         dilations=[2, 4, 8, 16, 32, 64],  # Extended dilation rates
+        #         activation='relu',  # Activation function
+        #         padding='same',  # Use causal padding
+        #         use_skip_connections=True,
+        #         dropout_rate=0.0,
+        #         return_sequences=False)(combined_features)
 
         # Input layer for previous capacity
         previous_capacity_input = keras.layers.Input(shape=(1,), name='previous_capacity_input')
@@ -187,6 +189,102 @@ class Model:
         x = keras.layers.Dense(3, activation='tanh', kernel_regularizer=keras.regularizers.l2(0.00))(x)
         x = keras.layers.Dropout(0.0)(x)
         output = keras.layers.Dense(1, activation='linear')(x)
+
+        # Build the model
+        self.model = keras.models.Model(
+            inputs=[bin_index_input, time_spent_input, previous_capacity_input],
+            outputs=output
+        )
+
+        # Save model summary
+        model_summary_path = os.path.join(self.model_dir, 'model_summary.txt')
+        with open(model_summary_path, 'w') as f:
+            self.model.summary(print_fn=lambda x: f.write(x + '\n'))
+
+        # Compile the model
+        type_of_loss = self.config['model_config']['type_of_loss']
+        learning_rate = self.config['model_specifications']['learning_rate']
+        optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+        self.model.compile(
+            optimizer=optimizer,
+            loss=type_of_loss,
+            metrics=['mean_absolute_error', 'mean_squared_error']
+        )
+
+        return self.model
+
+    def build_vector_model_embedded_convo(self, max_sequence_length: int, no_of_input_features:int):
+        """
+        Build and compile a 1D Convolution model with embeddings.
+        """
+
+        # Input layer for bin indices (integer-encoded sequence)
+        bin_index_input = keras.layers.Input(shape=(max_sequence_length,), name='bin_index_input')
+
+        # Input layer for time spent in bins
+        time_spent_input = keras.layers.Input(shape=(max_sequence_length,), name='time_spent_input')
+
+        # Embedding layer for bin indices
+        embedding_dim = self.config['model_config']['embedding_size']  # Adjust as needed
+        input_dim = no_of_input_features+1  # 36 bins + 1 for padding (assuming bin indices from 1 to 36, padding index 0)
+        bin_embedding = keras.layers.Embedding(input_dim=input_dim, output_dim=embedding_dim,
+                                                  input_length=max_sequence_length, mask_zero=True)(bin_index_input)
+
+        # Reshape time_spent_input to (batch_size, max_sequence_length, 1)
+        time_spent_expanded = keras.layers.Reshape((max_sequence_length, 1))(time_spent_input)
+
+        # Apply masking to time_spent_input
+        time_spent_masked = keras.layers.Masking(mask_value=0.0)(time_spent_expanded)
+
+        # Interaction via element-wise multiplication
+        interaction_features = keras.layers.Multiply()([bin_embedding, time_spent_masked])
+
+        # Concatenate with original features
+        combined_features = keras.layers.Concatenate(name='first_concatenate')([bin_embedding, time_spent_masked, interaction_features])
+
+        # # TCN layer
+        # x = TCN(nb_filters=4,  # Number of filters
+        #         kernel_size=10,  # Kernel size
+        #         dilations=[1, 2, 4, 8, 16, 32,64],  # Dilation rates
+        #         activation='relu',
+        #         padding='same',
+        #         use_skip_connections=True)(combined_features)
+
+        # Apply 1D Convolution - Layer 1
+        x = keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1')(combined_features)
+        x = keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2')(x)
+        x = keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3')(x)
+        x = keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4')(x)
+
+        # Apply max pooling
+        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
+
+        # Flatten the output of the CNN to feed into dense layers
+        x = keras.layers.Flatten()(x)
+
+        # x = TCN(nb_filters=4,  # Number of filters
+        #         kernel_size=20,  # Increased kernel size
+        #         nb_stacks=1,  # Number of stacks (layers)
+        #         dilations=[2, 4, 8, 16, 32, 64],  # Extended dilation rates
+        #         activation='relu',  # Activation function
+        #         padding='same',  # Use causal padding
+        #         use_skip_connections=True,
+        #         dropout_rate=0.0,
+        #         return_sequences=False)(combined_features)
+
+        # Input layer for previous capacity
+        previous_capacity_input = keras.layers.Input(shape=(1,), name='previous_capacity_input')
+
+        # Concatenate TCN output with previous_capacity_input
+        concatenated = keras.layers.Concatenate(name='second_concatenate')([x, previous_capacity_input])
+
+        # Dense layers with regularization
+        x = keras.layers.Dense(5, activation='tanh', name='first_dense', kernel_regularizer=keras.regularizers.l2(0.00))(
+            concatenated)
+        x = keras.layers.Dropout(0.0)(x)
+        x = keras.layers.Dense(3, activation='tanh', name='second_dense', kernel_regularizer=keras.regularizers.l2(0.00))(x)
+        x = keras.layers.Dropout(0.0)(x)
+        output = keras.layers.Dense(1, name='third_dense', activation='linear')(x)
 
         # Build the model
         self.model = keras.models.Model(
@@ -363,7 +461,7 @@ class Model:
         )
 
         model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
+            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -413,7 +511,7 @@ class Model:
         )
 
         model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
+            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -544,6 +642,6 @@ class Model:
         """
         Load a saved model from the configured directory.
         """
-        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.keras')
+        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.h5')
         # self.model = keras.models.load_model(trained_model_path)
         self.model.load_weights(trained_model_path)
