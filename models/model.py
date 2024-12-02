@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import random
 import tensorflow as tf
 import keras
 # from tcn import TCN
@@ -9,6 +10,12 @@ from keras.utils import pad_sequences
 from keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistributed, Masking, Flatten, Dropout
 from keras.models import Model
 from typing import Dict, Any
+
+# # Set random seeds for reproducibility
+# seed=42
+# np.random.seed(seed)
+# random.seed(seed)
+# tf.random.set_seed(seed)
 
 class Model:
     def __init__(self, config: Dict[str, Any]):
@@ -461,7 +468,7 @@ class Model:
         )
 
         model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -511,7 +518,7 @@ class Model:
         )
 
         model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
-            filepath=os.path.join(self.checkpoints_dir, 'model.h5'),
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
             monitor=self.monitor_loss,
             save_best_only=True,
             mode='min',
@@ -642,6 +649,6 @@ class Model:
         """
         Load a saved model from the configured directory.
         """
-        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.h5')
+        trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.keras')
         # self.model = keras.models.load_model(trained_model_path)
         self.model.load_weights(trained_model_path)

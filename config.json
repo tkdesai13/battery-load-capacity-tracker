@@ -1,5 +1,5 @@
 {
-    "experiment_name": "new_embedded_8_convo_1000E_all_freq10hour_noscaling_001l_B128_MAE_343bins",
+    "experiment_name": "old_embedded_8_convo_1000E_all_freq10hour_noscaling_001l_B128_MSE_343bins",
     "scalar_vector_exp_flag": "embedded",
     "paths": {
         "trained_model": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results/updated_TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
@@ -57,7 +57,7 @@
         "trained_model": false,
         "embedding_size": 8,
         "monitor": "val_loss",
-        "type_of_loss": "mean_absolute_error"
+        "type_of_loss": "mean_squared_error"
     },
     "model_specifications": {
         "epochs": 1000,

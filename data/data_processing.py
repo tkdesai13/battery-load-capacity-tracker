@@ -15,6 +15,11 @@ from typing import Dict, Any, Tuple, List
 # import torch_geometric
 # from torch_geometric.data import Data
 
+# Set random seeds for reproducibility
+seed=42
+np.random.seed(seed)
+random.seed(seed)
+
 
 def matlab_struct_to_dict(matlab_struct: Any) -> dict:
     """
