@@ -4,11 +4,12 @@ import tensorflow as tf
 # from keras.preprocessing.sequence import pad_sequences
 from keras.utils import pad_sequences
 import numpy as np
+import pickle
 from typing import Dict, Any, List
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from bokeh.plotting import figure, output_file, save
 from bokeh.layouts import gridplot
-from bokeh.models import ColumnDataSource
+from bokeh.models import ColumnDataSource, Span
 from models.model import Model
 
 class ModelEvaluator:
@@ -90,7 +91,7 @@ class ModelEvaluator:
                                             max_transitions: int, output_filename_prefix: str = 'seq2seq_results'):
         """
         Evaluate the sequence-to-sequence model where each cell has multiple sequences.
-        This version does not alter pad_and_mask_data and extracts initial_q and cycle_no from cell_data directly.
+        This version also plots encoder data and uses per-sequence metrics for plot titles.
         """
 
         aggregated_predictions = {
@@ -124,7 +125,6 @@ class ModelEvaluator:
                     dq_true = dq_true_all[seq_idx]
 
                     # Extract initial_q from the last encoder timestep capacity
-                    # encoder_inputs['capacity'][seq_idx] is a list/array of encoder capacities
                     initial_q = cell_data['decoder_inputs']['previous_capacity'][seq_idx][0]
 
                     # Get cycle_no for decoder from decoder_inputs['cycle_no'][seq_idx]
@@ -140,12 +140,16 @@ class ModelEvaluator:
                     dq_true = dq_true[:decoder_sequence_length_without_padding].tolist()
                     dq_pred = dq_pred[:decoder_sequence_length_without_padding].tolist()
 
+                    # Compute per-sequence metrics
+                    seq_metrics = self._compute_metrics(q_true, q_pred, dq_true, dq_pred)
+
                     cell_sequences_predictions.append({
                         'cycle_no': cycle_no,
                         'q_actual': q_true,
                         'q_predict': q_pred,
                         'dq_actual': dq_true,
-                        'dq_predict': dq_pred
+                        'dq_predict': dq_pred,
+                        'metrics': seq_metrics
                     })
 
                     # Accumulate for cell-level metrics
@@ -154,8 +158,6 @@ class ModelEvaluator:
                     cell_dq_actual_all.extend(dq_true)
                     cell_dq_predict_all.extend(dq_pred)
                     cell_cycle_no_all.extend(cycle_no)
-
-                    print("cell", cell_name, len(cell_q_actual_all), len(cell_q_predict_all), len(cell_dq_actual_all), len(cell_dq_predict_all), len(cell_cycle_no_all))
 
                 # Compute cell-level metrics
                 cell_metrics = self._compute_metrics(cell_q_actual_all, cell_q_predict_all, cell_dq_actual_all,
@@ -169,9 +171,11 @@ class ModelEvaluator:
                 aggregated_predictions[split_type]['cycle_no'].extend(cell_cycle_no_all)
 
                 # Store cell predictions and metrics
+                # Note: We still store cell-level metrics but now each sequence has its own metrics too
                 split_cell_predictions[split_type][cell_name] = {
                     'sequences': cell_sequences_predictions,
-                    'metrics': cell_metrics
+                    'metrics': cell_metrics,
+                    'encoder_inputs': cell_data['encoder_inputs']  # needed for plotting encoder part
                 }
 
             # Compute overall metrics for this split
@@ -190,17 +194,25 @@ class ModelEvaluator:
             self._plot_sequences_bokeh(split_type, split_cell_predictions[split_type],
                                        f'{output_filename_prefix}_{split_type}.html')
 
+            # After all splits are processed, save *everything*:
+            # This includes the original input data and all predictions/metrics
+            all_data_to_save = {
+                'train_val_test_data': train_val_test_data,
+                'split_cell_predictions': split_cell_predictions
+            }
+
+            with open(os.path.join(self.model_dir, 'all_cell_data_with_predictions.pkl'), 'wb') as f:
+                pickle.dump(all_data_to_save, f)
+
         return aggregated_predictions
 
     def _compute_metrics(self, q_actual, q_predict, dq_actual, dq_predict):
-
         # Convert lists to numpy arrays for arithmetic
         q_actual = np.array(q_actual)
         q_predict = np.array(q_predict)
         dq_actual = np.array(dq_actual)
         dq_predict = np.array(dq_predict)
 
-        # Individual cell metrics for q and dq
         cell_metrics = {
             'q_metrics': {
                 'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
@@ -225,12 +237,28 @@ class ModelEvaluator:
         rows = []
         for cell, cell_info in cell_data.items():
             sequences = cell_info['sequences']
-            cell_metrics = cell_info['metrics']
+            encoder_data = cell_info['encoder_inputs']
 
             q_plots = []
             dq_plots = []
 
+            # encoder_data is a dictionary with keys: ['bin_indices', 'timebins', 'capacity', 'previous_capacity', 'capacity_difference', 'cumulative_time', 'cycle_no']
+            # Each entry of encoder_data['capacity'][seq_idx], encoder_data['cycle_no'][seq_idx], etc. corresponds to a single sequence's encoder portion.
+
             for seq_idx, seq_pred in enumerate(sequences):
+                # Extract encoder portion for this sequence
+                encoder_cycle_no = encoder_data['cycle_no'][seq_idx]
+                encoder_q_actual = encoder_data['capacity'][seq_idx]
+                encoder_dq_actual = encoder_data['capacity_difference'][seq_idx]
+
+                # Create encoder source
+                encoder_source = ColumnDataSource(data=dict(
+                    x=encoder_cycle_no,
+                    q_actual=encoder_q_actual,
+                    dq_actual=encoder_dq_actual
+                ))
+
+                # Create decoder source
                 source = ColumnDataSource(data=dict(
                     x=seq_pred['cycle_no'],
                     q_actual=seq_pred['q_actual'],
@@ -239,18 +267,48 @@ class ModelEvaluator:
                     dq_predict=seq_pred['dq_predict']
                 ))
 
+                # Use per-sequence metrics for titles
+                seq_metrics = seq_pred['metrics']
+
                 p_q = figure(
-                    title=f"Cell {cell}, Seq {seq_idx + 1} Q - RMSE:{cell_metrics['q_metrics']['rmse']:.4f}, MAPE:{cell_metrics['q_metrics']['mape']:.2f}%",
+                    title=(f"Cell {cell}, Q - "
+                           f"RMSE:{seq_metrics['q_metrics']['rmse']:.4f}, "
+                           f"MAPE:{seq_metrics['q_metrics']['mape']:.2f}%"),
                     x_axis_label='Cycle Number', y_axis_label='Q (Ah)', width=400, height=300)
-                p_q.line('x', 'q_actual', source=source, legend_label='Q actual', line_width=2, color='blue')
+
+                # Plot encoder actual Q
+                p_q.line('x', 'q_actual', source=encoder_source, legend_label='Q actual', line_width=2,
+                         color='blue')
+                # Plot decoder actual and predicted Q
+                p_q.line('x', 'q_actual', source=source, line_width=2, color='blue')
                 p_q.line('x', 'q_predict', source=source, legend_label='Q predict', line_width=2, color='red')
+
+                # Add a vertical line at the boundary: last encoder cycle
+                if len(encoder_cycle_no) > 0:
+                    boundary = encoder_cycle_no[-1]
+                    p_q.add_layout(Span(location=boundary, dimension='height', line_color='black', line_dash='dashed',
+                                        line_width=2))
+
                 p_q.legend.location = 'top_left'
 
                 p_dq = figure(
-                    title=f"Cell {cell}, Seq {seq_idx + 1} dQ - RMSE:{cell_metrics['dq_metrics']['rmse']:.4f}, MAPE:{cell_metrics['dq_metrics']['mape']:.2f}%",
+                    title=(f"Cell {cell}, dQ - "
+                           f"RMSE:{seq_metrics['dq_metrics']['rmse']:.4f}, "
+                           f"MAPE:{seq_metrics['dq_metrics']['mape']:.2f}%"),
                     x_axis_label='Cycle Number', y_axis_label='dQ (Ah)', width=400, height=300)
-                p_dq.line('x', 'dq_actual', source=source, legend_label='dQ actual', line_width=2, color='green')
+
+                # Plot encoder actual dQ
+                p_dq.line('x', 'dq_actual', source=encoder_source, legend_label='dQ actual', line_width=2,
+                          color='green')
+                # Plot decoder actual and predicted dQ
+                p_dq.line('x', 'dq_actual', source=source, line_width=2,
+                          color='green')
                 p_dq.line('x', 'dq_predict', source=source, legend_label='dQ predict', line_width=2, color='orange')
+
+                if len(encoder_cycle_no) > 0:
+                    p_dq.add_layout(Span(location=boundary, dimension='height', line_color='black', line_dash='dashed',
+                                         line_width=2))
+
                 p_dq.legend.location = 'top_left'
 
                 q_plots.append(p_q)

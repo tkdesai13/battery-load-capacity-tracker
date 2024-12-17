@@ -1,5 +1,5 @@
 {
-    "experiment_name": "seq_to_seq_embedded_8_convo_10E_all_freq10hour_noscaling_001l_B128_MSE_343bins",
+    "experiment_name": "trial_seq_to_seq_embedded_8_convo_10E_all_freq10hour_noscaling_001l_B128_MSE_343bins",
     "scalar_vector_exp_flag": "embedded",
     "sequence_to_sequence": true,
     "paths": {

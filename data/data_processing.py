@@ -166,7 +166,7 @@ class DataProcessor:
 
         # Iterate over all .pkl files in the data directory
         all_files = os.listdir(data_path)
-        for file_name in all_files:
+        for file_name in all_files[:1]:
             if file_name.endswith('.pkl'):
                 batch_no = self._extract_batch_number(file_name)  # Function to extract batch number from the file name
                 print(f"Processing batch {batch_no} from {file_name}")
