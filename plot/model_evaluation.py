@@ -4,21 +4,19 @@ import tensorflow as tf
 # from keras.preprocessing.sequence import pad_sequences
 from keras.utils import pad_sequences
 import numpy as np
-from typing import Dict, Any
+from typing import Dict, Any, List
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from bokeh.plotting import figure, output_file, save
 from bokeh.layouts import gridplot
 from bokeh.models import ColumnDataSource
+from models.model import Model
 
 class ModelEvaluator:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], model_instance: Model):
         self.config = config
+        self.model_instance = model_instance
         self.model_dir = os.path.join(config['paths']['result'], config['experiment_name'])
         os.makedirs(self.model_dir, exist_ok=True)
-
-    import os
-    import json
-    from typing import Dict, Any, List
 
     def evaluate_model(self, model, data: Dict[str, Any], min_max_values: Dict[str, Any],
                        max_sequence_length: int = None, test_cells: List[str] = None):
@@ -86,6 +84,184 @@ class ModelEvaluator:
             self._plot_results(predictions, cell_metrics, f'{split_type}_results.html')
 
         return aggregated_predictions
+
+    def evaluate_sequence_to_sequence_model(self, model, train_val_test_data: Dict[str, Dict[str, Any]],
+                                            max_encoder_timesteps: int, max_decoder_timesteps: int,
+                                            max_transitions: int, output_filename_prefix: str = 'seq2seq_results'):
+        """
+        Evaluate the sequence-to-sequence model where each cell has multiple sequences.
+        This version does not alter pad_and_mask_data and extracts initial_q and cycle_no from cell_data directly.
+        """
+
+        aggregated_predictions = {
+            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'validation': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []}
+        }
+
+        split_cell_predictions = {'train': {}, 'validation': {}, 'test': {}}
+
+        for split_type in ['train', 'validation', 'test']:
+            for cell_name, cell_data in train_val_test_data[split_type].items():
+                num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
+
+                # Pad and mask all sequences at once using pad_and_mask_data
+                inputs, targets = self.model_instance.pad_and_mask_data(
+                    cell_data, max_encoder_timesteps, max_decoder_timesteps, max_transitions, pre_pad_encoder=False
+                )
+                # predictions: (num_sequences, max_decoder_timesteps, 1)
+                predictions = model.predict(inputs, verbose=0)
+                dq_pred_all = predictions[:, :, 0]  # (num_sequences, max_decoder_timesteps)
+                dq_true_all = targets[:, :, 0]  # (num_sequences, max_decoder_timesteps)
+
+                cell_sequences_predictions = []
+                cell_q_actual_all, cell_q_predict_all = [], []
+                cell_dq_actual_all, cell_dq_predict_all = [], []
+                cell_cycle_no_all = []
+
+                for seq_idx in range(num_sequences):
+                    dq_pred = dq_pred_all[seq_idx]
+                    dq_true = dq_true_all[seq_idx]
+
+                    # Extract initial_q from the last encoder timestep capacity
+                    # encoder_inputs['capacity'][seq_idx] is a list/array of encoder capacities
+                    initial_q = cell_data['decoder_inputs']['previous_capacity'][seq_idx][0]
+
+                    # Get cycle_no for decoder from decoder_inputs['cycle_no'][seq_idx]
+                    cycle_no = cell_data['decoder_inputs']['cycle_no'][seq_idx]
+
+                    # Reconstruct Q
+                    q_pred = np.cumsum(dq_pred) + initial_q
+                    q_true = cell_data['decoder_inputs']['capacity'][seq_idx]
+
+                    # Sequence length without padding
+                    decoder_sequence_length_without_padding = len(cycle_no)
+                    q_pred = q_pred[:decoder_sequence_length_without_padding].tolist()
+                    dq_true = dq_true[:decoder_sequence_length_without_padding].tolist()
+                    dq_pred = dq_pred[:decoder_sequence_length_without_padding].tolist()
+
+                    cell_sequences_predictions.append({
+                        'cycle_no': cycle_no,
+                        'q_actual': q_true,
+                        'q_predict': q_pred,
+                        'dq_actual': dq_true,
+                        'dq_predict': dq_pred
+                    })
+
+                    # Accumulate for cell-level metrics
+                    cell_q_actual_all.extend(q_true)
+                    cell_q_predict_all.extend(q_pred)
+                    cell_dq_actual_all.extend(dq_true)
+                    cell_dq_predict_all.extend(dq_pred)
+                    cell_cycle_no_all.extend(cycle_no)
+
+                    print("cell", cell_name, len(cell_q_actual_all), len(cell_q_predict_all), len(cell_dq_actual_all), len(cell_dq_predict_all), len(cell_cycle_no_all))
+
+                # Compute cell-level metrics
+                cell_metrics = self._compute_metrics(cell_q_actual_all, cell_q_predict_all, cell_dq_actual_all,
+                                                     cell_dq_predict_all)
+
+                # Update aggregated predictions
+                aggregated_predictions[split_type]['q_actual'].extend(cell_q_actual_all)
+                aggregated_predictions[split_type]['q_predict'].extend(cell_q_predict_all)
+                aggregated_predictions[split_type]['dq_actual'].extend(cell_dq_actual_all)
+                aggregated_predictions[split_type]['dq_predict'].extend(cell_dq_predict_all)
+                aggregated_predictions[split_type]['cycle_no'].extend(cell_cycle_no_all)
+
+                # Store cell predictions and metrics
+                split_cell_predictions[split_type][cell_name] = {
+                    'sequences': cell_sequences_predictions,
+                    'metrics': cell_metrics
+                }
+
+            # Compute overall metrics for this split
+            split_metrics = self._compute_metrics(
+                aggregated_predictions[split_type]['q_actual'],
+                aggregated_predictions[split_type]['q_predict'],
+                aggregated_predictions[split_type]['dq_actual'],
+                aggregated_predictions[split_type]['dq_predict']
+            )
+
+            # Save overall metrics
+            with open(os.path.join(self.model_dir, f'{split_type}_overall_metrics.json'), 'w') as f:
+                json.dump(split_metrics, f, indent=4)
+
+            # Plot results for this split
+            self._plot_sequences_bokeh(split_type, split_cell_predictions[split_type],
+                                       f'{output_filename_prefix}_{split_type}.html')
+
+        return aggregated_predictions
+
+    def _compute_metrics(self, q_actual, q_predict, dq_actual, dq_predict):
+
+        # Convert lists to numpy arrays for arithmetic
+        q_actual = np.array(q_actual)
+        q_predict = np.array(q_predict)
+        dq_actual = np.array(dq_actual)
+        dq_predict = np.array(dq_predict)
+
+        # Individual cell metrics for q and dq
+        cell_metrics = {
+            'q_metrics': {
+                'rmse': np.sqrt(mean_squared_error(q_actual, q_predict)),
+                'mae': mean_absolute_error(q_actual, q_predict),
+                'mape': np.mean(np.abs((q_actual - q_predict) / q_actual)) * 100,
+                'r2': r2_score(q_actual, q_predict),
+                'mse': mean_squared_error(q_actual, q_predict)
+            },
+            'dq_metrics': {
+                'rmse': np.sqrt(mean_squared_error(dq_actual, dq_predict)),
+                'crmse': np.sqrt(np.mean(((dq_actual - dq_predict) / q_actual) ** 2)) * 100,
+                'mae': mean_absolute_error(dq_actual, dq_predict),
+                'mape': np.mean(np.abs((dq_actual - dq_predict) / q_actual)) * 100,
+                'r2': r2_score(dq_actual, dq_predict),
+                'mse': mean_squared_error(dq_actual, dq_predict)
+            }
+        }
+        return cell_metrics
+
+    def _plot_sequences_bokeh(self, split_type: str, cell_data: Dict[str, Any], output_filename: str):
+
+        rows = []
+        for cell, cell_info in cell_data.items():
+            sequences = cell_info['sequences']
+            cell_metrics = cell_info['metrics']
+
+            q_plots = []
+            dq_plots = []
+
+            for seq_idx, seq_pred in enumerate(sequences):
+                source = ColumnDataSource(data=dict(
+                    x=seq_pred['cycle_no'],
+                    q_actual=seq_pred['q_actual'],
+                    q_predict=seq_pred['q_predict'],
+                    dq_actual=seq_pred['dq_actual'],
+                    dq_predict=seq_pred['dq_predict']
+                ))
+
+                p_q = figure(
+                    title=f"Cell {cell}, Seq {seq_idx + 1} Q - RMSE:{cell_metrics['q_metrics']['rmse']:.4f}, MAPE:{cell_metrics['q_metrics']['mape']:.2f}%",
+                    x_axis_label='Cycle Number', y_axis_label='Q (Ah)', width=400, height=300)
+                p_q.line('x', 'q_actual', source=source, legend_label='Q actual', line_width=2, color='blue')
+                p_q.line('x', 'q_predict', source=source, legend_label='Q predict', line_width=2, color='red')
+                p_q.legend.location = 'top_left'
+
+                p_dq = figure(
+                    title=f"Cell {cell}, Seq {seq_idx + 1} dQ - RMSE:{cell_metrics['dq_metrics']['rmse']:.4f}, MAPE:{cell_metrics['dq_metrics']['mape']:.2f}%",
+                    x_axis_label='Cycle Number', y_axis_label='dQ (Ah)', width=400, height=300)
+                p_dq.line('x', 'dq_actual', source=source, legend_label='dQ actual', line_width=2, color='green')
+                p_dq.line('x', 'dq_predict', source=source, legend_label='dQ predict', line_width=2, color='orange')
+                p_dq.legend.location = 'top_left'
+
+                q_plots.append(p_q)
+                dq_plots.append(p_dq)
+
+            cell_row = gridplot([q_plots, dq_plots])
+            rows.append([cell_row])
+
+        final_layout = gridplot(rows)
+        output_file(os.path.join(self.model_dir, output_filename))
+        save(final_layout)
 
     def _evaluate_single_cell(self, model, cell_data: Dict[str, Any], min_max_values: Dict, max_sequence_length: int):
         """

@@ -1,6 +1,3 @@
-# Description: This file contains the DataProcessor class, which is responsible for loading, preprocessing, and
-# structuring the data for training and testing the model.
-
 import os
 import itertools
 import pickle
@@ -10,15 +7,15 @@ import scipy.io
 import numpy as np
 from collections import defaultdict
 from typing import Dict, Any, Tuple, List
+
 # import torch
 # import torch.nn as nn
 # import torch_geometric
 # from torch_geometric.data import Data
 
 # Set random seeds for reproducibility
-seed=42
-np.random.seed(seed)
-random.seed(seed)
+seed = 42
+rng = np.random.default_rng(seed=seed)
 
 
 def matlab_struct_to_dict(matlab_struct: Any) -> dict:
@@ -263,7 +260,8 @@ class DataProcessor:
                 # if cycle_counter > 1 and not self._is_valid_capacity_change(processed_data, cycle_counter, cycle_data):
                 #     continue
 
-                processed_load_pattern, cumulative_time_for_cell = self._process_load_pattern(accumulated_data, cumulative_time_for_cell)
+                processed_load_pattern, cumulative_time_for_cell = self._process_load_pattern(accumulated_data,
+                                                                                              cumulative_time_for_cell)
 
                 cell_summery_data = cell_data['summary']
 
@@ -300,7 +298,7 @@ class DataProcessor:
         # Adjust and concatenate time data
         adjusted_time_arrays = []
         for time_array in step_data["time"]:
-            time_array = time_array/60  # Convert time to hours
+            time_array = time_array / 60  # Convert time to hours
             adjusted_time_array = time_array + cumulative_time_for_cell
             adjusted_time_arrays.append(adjusted_time_array)  # Adjust time to be continuous across cycles
             cumulative_time_for_cell += time_array[0, -1]  # Update cumulative time for the cell
@@ -900,14 +898,14 @@ class DataProcessor:
 
         split_data = {
             "train": {
-                "bin_indices":[],
+                "bin_indices": [],
                 "timebins": [],
                 "previous_capacity": [],
                 "capacity_difference": [],
                 "cumulative_time_at_ground_truth": []
             },
             "validation": {
-                "bin_indices":[],
+                "bin_indices": [],
                 "timebins": [],
                 "previous_capacity": [],
                 "capacity_difference": [],
@@ -938,6 +936,277 @@ class DataProcessor:
 
         return split_data, list(split_data['test'].keys())
 
+    def prepare_data_sequence_to_sequence(self, scaled_data: Dict[str, Dict[str, Dict[str, Any]]]) -> Tuple[
+        Dict[str, Dict[str, Any]], List[str]]:
+        """
+        Prepare data for sequence-to-sequence learning, maintaining temporal order of cycles.
+
+        1. Split cells into training, validation, and test sets.
+        2. For each cell, divide cycles into encoder (input) and decoder (output) sequences.
+        3. Return split data with train, validation, and test sets.
+
+        :param scaled_data: The dataset structured by batch, cell, and cycles.
+        :return: A dictionary with train, validation, and test data splits and the list of test cell names.
+        """
+
+        # Initialize the data split
+        split_data = {
+            "train": {},
+            "validation": {},
+            "test": {}
+        }
+
+        # Configuration parameters
+        test_percentage = self.config['model_specifications']['test_train_cells_ratio']  # Fraction of cells for testing
+        val_percentage = self.config['model_specifications'][
+            'val_train_cycles_ratio']  # Fraction of training for validation
+        encoder_length = self.config['model_specifications']['encoder_input_seq']  # Fixed number of cycles for encoder
+
+        for batch_name, batch_cells in scaled_data.items():
+            cell_names = list(batch_cells.keys())
+
+            # Use RNG to shuffle deterministically
+            shuffled_indices = rng.permutation(len(cell_names))
+            cell_names = [cell_names[i] for i in shuffled_indices]
+
+            # Split cells into test, train, and validation
+            num_test_cells = int(len(cell_names) * test_percentage)
+            test_cells = cell_names[:num_test_cells]
+            train_val_cells = cell_names[num_test_cells:]
+
+            num_val_cells = int(len(train_val_cells) * val_percentage)
+            val_cells = train_val_cells[:num_val_cells]
+            train_cells = train_val_cells[num_val_cells:]
+
+            # Process test cells
+            for cell_name in test_cells:
+                self._process_cell_cycles(
+                    cell_name,
+                    batch_cells[cell_name],
+                    encoder_length,
+                    split_data,
+                    "test"
+                )
+
+            # Process train and validation cells
+            for cell, split_key in zip([train_cells, val_cells], ["train", "validation"]):
+                for cell_name in cell:
+                    self._process_cell_cycles(
+                        cell_name,
+                        batch_cells[cell_name],
+                        encoder_length,
+                        split_data,
+                        split_key
+                    )
+
+        return split_data, test_cells
+
+    def _process_cell_cycles(self, cell_name, cell_data, encoder_length, split_data, split_key):
+        """
+        Process a single cell's cycles to extract encoder-decoder sequences with predefined split ratios.
+
+        :param cell_name: The name of the cell being processed.
+        :param cell_data: The data for a single cell.
+        :param encoder_length: Minimum number of cycles for the encoder (not used directly now as we rely on ratios).
+        :param split_data: Dictionary to store processed data.
+        :param split_key: Key indicating the data split (train, validation, or test).
+        """
+        cycles = list(cell_data.keys())
+        cycles.sort(key=int)  # Ensure sequential order
+
+        max_no_of_sequences_per_cell = self.config['model_specifications']['max_no_of_sequences_per_cell']
+        min_decoder_length = self.config['model_specifications'].get('min_decoder_length', 1)
+
+        total_cycles = len(cycles)
+        # if total_cycles <= encoder_length + min_decoder_length:
+        #     return  # Skip cells with insufficient cycles
+
+        # Initialize structure for this cell in the split if not present
+        if cell_name not in split_data[split_key]:
+            split_data[split_key][cell_name] = {
+                "encoder_inputs": {
+                    "bin_indices": [],
+                    "timebins": [],
+                    "capacity": [],
+                    "previous_capacity": [],
+                    "capacity_difference": [],
+                    "cumulative_time": [],
+                    "cycle_no": []
+                },
+                "decoder_inputs": {
+                    "bin_indices": [],
+                    "timebins": [],
+                    "capacity": [],
+                    "previous_capacity": [],
+                    "cumulative_time": [],
+                    "cycle_no": [],
+                },
+                "decoder_outputs": {
+                    "capacity_difference": []
+                },
+            }
+
+        # Retrieve ratio map from config
+        ratio_map = self.config.get('encoder_decoder_ratio_map', {})
+        # Convert max_no_of_sequences_per_cell to string since keys in config are strings
+        max_no_str = str(max_no_of_sequences_per_cell)
+
+        if max_no_str in ratio_map:
+            split_ratios = ratio_map[max_no_str]
+        else:
+            # If not found, default to a single split at 50%
+            split_ratios = [0.5]
+
+        # Convert ratios to actual split points
+        sequence_split_points = []
+        for ratio in split_ratios:
+            split_point = int(round(total_cycles * ratio))
+            # Ensure minimum decoder length
+            if split_point < total_cycles - min_decoder_length:
+                sequence_split_points.append(split_point)
+
+        for split_point in sequence_split_points:
+            encoder_cycles = cycles[:split_point]  # Encoder: cycles from start to split_point
+            decoder_cycles = cycles[split_point:]  # Decoder: cycles from split_point onward
+
+            # Ensure decoder length is sufficient
+            if len(decoder_cycles) < min_decoder_length:
+                continue
+
+            # Encoder inputs
+            encoder_bin_indices = [cell_data[c]['bin_indices'] for c in encoder_cycles]
+            encoder_timebins = [cell_data[c]['accumulated_time_bins'] for c in encoder_cycles]
+            encoder_capacity_difference = [cell_data[c]['capacity_diff'] for c in encoder_cycles]
+            encoder_capacity = [cell_data[c]['capacity'] for c in encoder_cycles]
+            encoder_previous_capacity = [cell_data[c]['previous_capacity'] for c in encoder_cycles]
+            encoder_cumulative_time = [cell_data[c]['cumulative_time_at_ground_truth'] for c in encoder_cycles]
+            encoder_cycle_no = [cell_data[c]['cycle_no'] for c in encoder_cycles]
+
+            # Decoder inputs and outputs
+            decoder_bin_indices = [cell_data[c]['bin_indices'] for c in decoder_cycles]
+            decoder_timebins = [cell_data[c]['accumulated_time_bins'] for c in decoder_cycles]
+            decoder_capacity_difference = [cell_data[c]['capacity_diff'] for c in decoder_cycles]
+            decoder_capacity = [cell_data[c]['capacity'] for c in decoder_cycles]
+            decoder_previous_capacity = [cell_data[c]['previous_capacity'] for c in decoder_cycles]
+            decoder_cumulative_time = [cell_data[c]['cumulative_time_at_ground_truth'] for c in decoder_cycles]
+            decoder_cycle_no = [cell_data[c]['cycle_no'] for c in decoder_cycles]
+
+            # Append to the respective cell's structure
+            split_data[split_key][cell_name]["encoder_inputs"]["bin_indices"].append(encoder_bin_indices)
+            split_data[split_key][cell_name]["encoder_inputs"]["timebins"].append(encoder_timebins)
+            split_data[split_key][cell_name]["encoder_inputs"]["capacity_difference"].append(
+                encoder_capacity_difference)
+            split_data[split_key][cell_name]["encoder_inputs"]["capacity"].append(encoder_capacity)
+            split_data[split_key][cell_name]["encoder_inputs"]["previous_capacity"].append(encoder_previous_capacity)
+            split_data[split_key][cell_name]["encoder_inputs"]["cumulative_time"].append(encoder_cumulative_time)
+            split_data[split_key][cell_name]["encoder_inputs"]["cycle_no"].append(encoder_cycle_no)
+
+            split_data[split_key][cell_name]["decoder_inputs"]["bin_indices"].append(decoder_bin_indices)
+            split_data[split_key][cell_name]["decoder_inputs"]["timebins"].append(decoder_timebins)
+            split_data[split_key][cell_name]["decoder_outputs"]["capacity_difference"].append(
+                decoder_capacity_difference)
+            split_data[split_key][cell_name]["decoder_inputs"]["capacity"].append(decoder_capacity)
+            split_data[split_key][cell_name]["decoder_inputs"]["previous_capacity"].append(decoder_previous_capacity)
+            split_data[split_key][cell_name]["decoder_inputs"]["cumulative_time"].append(decoder_cumulative_time)
+            split_data[split_key][cell_name]["decoder_inputs"]["cycle_no"].append(decoder_cycle_no)
+
+    def shuffle_and_split_data_sequence_to_sequence(self, train_val_test_data):
+        """
+        Combine and shuffle sequences across cells for train, validation, and test splits.
+        Calculate max and min sequence lengths for encoder and decoder.
+
+        :param train_val_test_data: The split data structured by train, validation, and test sets.
+        :return: Shuffled data and statistics on sequence lengths.
+        """
+        # Dynamically extract keys from the first available cell
+        example_cell = next(iter(train_val_test_data["train"].values()))
+        encoder_input_keys = example_cell["encoder_inputs"].keys()
+        decoder_input_keys = example_cell["decoder_inputs"].keys()
+        decoder_output_keys = example_cell["decoder_outputs"].keys()
+
+        # Initialize the shuffled data structure
+        shuffled_data = self._initialize_shuffled_structure(encoder_input_keys, decoder_input_keys,
+                                                            decoder_output_keys)
+
+        # Initialize variables to track max and min sequence lengths
+        seq_lengths = {split: {"encoder_max": 0, "encoder_min": float("inf"),
+                               "decoder_max": 0, "decoder_min": float("inf")} for split in
+                       ["train", "validation", "test"]}
+
+        # Process each split
+        for split_key in ["train", "validation", "test"]:
+            for cell_name, cell_data in train_val_test_data[split_key].items():
+                num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
+                for i in range(num_sequences):
+                    # Add sequences to shuffled_data
+                    self._append_sequences(shuffled_data[split_key], cell_data, encoder_input_keys,
+                                           decoder_input_keys, decoder_output_keys, i)
+
+                    # Update sequence length stats
+                    encoder_seq = cell_data["encoder_inputs"]["bin_indices"][i]
+                    decoder_seq = cell_data["decoder_inputs"]["bin_indices"][i]
+                    self._update_seq_lengths(seq_lengths[split_key], encoder_seq, decoder_seq)
+
+            # Shuffle the sequences within the split
+            self._shuffle_split(shuffled_data[split_key], encoder_input_keys, decoder_input_keys,
+                                decoder_output_keys)
+
+        return shuffled_data, seq_lengths
+
+    def _initialize_shuffled_structure(self, encoder_input_keys, decoder_input_keys, decoder_output_keys):
+        """Initialize the shuffled data structure dynamically based on the keys."""
+        return {
+            split: {
+                "encoder_inputs": {key: [] for key in encoder_input_keys},
+                "decoder_inputs": {key: [] for key in decoder_input_keys},
+                "decoder_outputs": {key: [] for key in decoder_output_keys},
+            } for split in ["train", "validation", "test"]
+        }
+
+    def _append_sequences(self, split_data, cell_data, encoder_input_keys, decoder_input_keys, decoder_output_keys,
+                          idx):
+        """Append sequences from a cell to the split data."""
+        for key in encoder_input_keys:
+            split_data["encoder_inputs"][key].append(cell_data["encoder_inputs"][key][idx])
+        for key in decoder_input_keys:
+            split_data["decoder_inputs"][key].append(cell_data["decoder_inputs"][key][idx])
+        for key in decoder_output_keys:
+            split_data["decoder_outputs"][key].append(cell_data["decoder_outputs"][key][idx])
+
+    def _update_seq_lengths(self, seq_length_stats, encoder_seq, decoder_seq):
+        """Update max and min sequence lengths for a split."""
+        encoder_len = len(encoder_seq)
+        decoder_len = len(decoder_seq)
+        seq_length_stats["encoder_max"] = max(seq_length_stats["encoder_max"], encoder_len)
+        seq_length_stats["encoder_min"] = min(seq_length_stats["encoder_min"], encoder_len)
+        seq_length_stats["decoder_max"] = max(seq_length_stats["decoder_max"], decoder_len)
+        seq_length_stats["decoder_min"] = min(seq_length_stats["decoder_min"], decoder_len)
+
+    def _shuffle_split(self, split_data, encoder_input_keys, decoder_input_keys, decoder_output_keys):
+        """Shuffle the sequences within a split without mixing keys."""
+        # Extract the entire sequence for each sample (grouped by index) to maintain alignment
+        num_samples = len(split_data["encoder_inputs"][next(iter(encoder_input_keys))])  # Get the number of samples
+        combined_sequences = [
+            {
+                "encoder_inputs": {key: split_data["encoder_inputs"][key][i] for key in encoder_input_keys},
+                "decoder_inputs": {key: split_data["decoder_inputs"][key][i] for key in decoder_input_keys},
+                "decoder_outputs": {key: split_data["decoder_outputs"][key][i] for key in decoder_output_keys},
+            }
+            for i in range(num_samples)
+        ]
+
+        # Shuffle the combined sequences using NumPy's default_rng for reproducibility
+        shuffled_indices = rng.permutation(len(combined_sequences))
+        combined_sequences = [combined_sequences[i] for i in shuffled_indices]
+
+        # Unpack shuffled sequences back into the original structure
+        for key in encoder_input_keys:
+            split_data["encoder_inputs"][key] = [seq["encoder_inputs"][key] for seq in combined_sequences]
+        for key in decoder_input_keys:
+            split_data["decoder_inputs"][key] = [seq["decoder_inputs"][key] for seq in combined_sequences]
+        for key in decoder_output_keys:
+            split_data["decoder_outputs"][key] = [seq["decoder_outputs"][key] for seq in combined_sequences]
+
     def _split_test_cells(self, cell_names: List[str]) -> Tuple[List[str], List[str]]:
         """
         Split cell names into test and training/validation sets.
@@ -947,7 +1216,10 @@ class DataProcessor:
         """
         test_train_cells_ratio = self.config['model_specifications']['test_train_cells_ratio']
         test_size = int(len(cell_names) * test_train_cells_ratio)
-        test_cells = random.sample(cell_names, test_size)
+
+        # Use numpy RNG for deterministic, cross-platform sampling
+        test_cells = rng.choice(cell_names, size=test_size, replace=False).tolist()
+
         train_cells = [cell for cell in cell_names if cell not in test_cells]
         return test_cells, train_cells
 
@@ -986,10 +1258,16 @@ class DataProcessor:
         :param combined_cycles: List of cycles to split.
         :return: Tuple of (train_cycles, val_cycles).
         """
-        np.random.shuffle(combined_cycles)
+
+        # Shuffle cycles deterministically
+        shuffled_indices = rng.permutation(len(combined_cycles))
+        combined_cycles = [combined_cycles[i] for i in shuffled_indices]
+
+        # Determine split index
         val_split_ratio = self.config['model_specifications']['val_train_cycles_ratio']
         split_index = int(len(combined_cycles) * (1 - val_split_ratio))
 
+        # Split into training and validation sets
         train_cycles = combined_cycles[:split_index]
         val_cycles = combined_cycles[split_index:]
 
@@ -1004,7 +1282,8 @@ class DataProcessor:
         :param cycles: List of cycle data tuples to add.
         """
         if cycles:
-            bin_indices, timebins, previous_capacity, capacity_difference, cumulative_time_at_ground_truth = zip(*cycles)
+            bin_indices, timebins, previous_capacity, capacity_difference, cumulative_time_at_ground_truth = zip(
+                *cycles)
             split_data[split_type]["bin_indices"].extend(bin_indices)
             split_data[split_type]["timebins"].extend(timebins)
             split_data[split_type]["previous_capacity"].extend(previous_capacity)
@@ -1026,8 +1305,10 @@ class DataProcessor:
 
     def shuffle_and_split_graph_data(self, graph_data):
         """
-        :param graph_data:  The graph data structured by cell type, cell name, and cycle number.
-        :return:
+        Shuffle and split graph data into training and validation sets deterministically.
+
+        :param graph_data: The graph data structured by cell type, cell name, and cycle number.
+        :return: A tuple containing train graphs and validation graphs.
         """
 
         train_graphs = []
@@ -1035,9 +1316,14 @@ class DataProcessor:
         val_split_ratio = self.config['model_specifications']['val_train_split_ratio']
 
         for cell_name, cycles in graph_data['train_cells'].items():
-            cycles_list = list(cycles.items())  # Convert to a list of tuples (cycle_no, graph)
-            np.random.shuffle(cycles_list)
+            # Convert to a list of tuples (cycle_no, graph)
+            cycles_list = list(cycles.items())
 
+            # Shuffle the cycles deterministically
+            shuffled_indices = rng.permutation(len(cycles_list))
+            cycles_list = [cycles_list[i] for i in shuffled_indices]
+
+            # Determine split index
             split_index = int(len(cycles_list) * (1 - val_split_ratio))
             train_cycles = cycles_list[:split_index]
             val_cycles = cycles_list[split_index:]
@@ -1176,7 +1462,8 @@ class DataProcessor:
         for i in range(len(self.voltage_bins)):
             for j in range(len(self.current_bins)):
                 for k in range(len(self.temperature_bins)):
-                    flat_idx = i * self.num_bins_per_dim[1] * self.num_bins_per_dim[2] + j * self.num_bins_per_dim[2] + k
+                    flat_idx = i * self.num_bins_per_dim[1] * self.num_bins_per_dim[2] + j * self.num_bins_per_dim[
+                        2] + k
                     bin_mapping[flat_idx] = (i, j, k)
         return bin_mapping
 

@@ -244,10 +244,10 @@ class Model:
         time_spent_masked = keras.layers.Masking(mask_value=0.0)(time_spent_expanded)
 
         # Interaction via element-wise multiplication
-        interaction_features = keras.layers.Multiply()([bin_embedding, time_spent_masked])
+        # interaction_features = keras.layers.Multiply()([bin_embedding, time_spent_masked])
 
         # Concatenate with original features
-        combined_features = keras.layers.Concatenate(name='first_concatenate')([bin_embedding, time_spent_masked, interaction_features])
+        combined_features = keras.layers.Concatenate(name='first_concatenate')([bin_embedding, time_spent_masked])
 
         # # TCN layer
         # x = TCN(nb_filters=4,  # Number of filters
@@ -316,134 +316,185 @@ class Model:
 
         return self.model
 
-    def build_sequence_to_sequence_model(self,
-                                         encoder_timesteps: int,
-                                         decoder_timesteps: int,
-                                         transitions: int,
-                                         bins: int,
-                                         no_of_input_features: int):
+    def build_sequence_to_sequence_model_with_padding_vector_and_convolution(self,
+                                                                             max_encoder_timesteps: int,
+                                                                             max_decoder_timesteps: int,
+                                                                             max_transitions: int,
+                                                                             bins: int):
         """
-        Build and compile a Sequence-to-Sequence model with Encoder-Decoder architecture.
+        Build and compile an Encoder-Decoder Sequence-to-Sequence model using convolution-based feature extraction
+        with masking to handle padding.
 
-        :param encoder_timesteps: Number of time steps for the encoder (e.g., 10).
-        :param decoder_timesteps: Number of time steps for the decoder (e.g., 15).
-        :param transitions: Number of transitions in each U matrix.
-        :param bins: Number of bins in each U matrix.
-        :param no_of_input_features: Number of input features per U matrix (transitions * bins).
+        :param max_encoder_timesteps: Maximum number of timesteps for the encoder.
+        :param max_decoder_timesteps: Maximum number of timesteps for the decoder.
+        :param max_transitions: Maximum number of transitions in the bin matrix.
+        :param bins: Number of bins.
         """
+        embedding_dim = self.config['model_config']['embedding_size']
+        type_of_loss = self.config['model_config']['type_of_loss']
+        learning_rate = self.config['model_specifications']['learning_rate']
 
         # ============================
         # 1. Encoder Inputs
         # ============================
 
-        # Input for U matrices in encoder
-        encoder_U_input = Input(shape=(encoder_timesteps, transitions * bins), name='encoder_U_input')
+        # Input for bin indices (sequence of transitions for encoder)
+        encoder_bin_indices = keras.layers.Input(
+            shape=(max_encoder_timesteps, max_transitions), name="encoder_bin_indices"
+        )
 
-        # Input for deltaQ in encoder
-        encoder_deltaQ_input = Input(shape=(encoder_timesteps, 1), name='encoder_deltaQ_input')
+        # Input for time spent in bins (corresponding to encoder bin indices)
+        encoder_time_spent = keras.layers.Input(
+            shape=(max_encoder_timesteps, max_transitions), name="encoder_time_spent"
+        )
 
-        # Input for initial Q
-        initial_Q_input = Input(shape=(1,), name='initial_Q_input')
+        # Input for capacity delta
+        encoder_capacity_delta = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_capacity_delta"
+        )
 
-        # Masking for encoder U input
-        encoder_U_masked = Masking(mask_value=0.0)(encoder_U_input)
+        # Embedding for bin indices with masking
+        encoder_bin_embedding = keras.layers.TimeDistributed(
+            keras.layers.Embedding(
+                input_dim=bins + 1,  # +1 for padding
+                output_dim=embedding_dim,
+                mask_zero=True,  # Enables masking for padded values
+            ),
+            name="encoder_embedding",
+        )(encoder_bin_indices)
 
-        # ============================
-        # 2. Encoder Convolutional Layers
-        # ============================
+        # Reshape time spent input to match embedding dimensions
+        encoder_time_spent_expanded = keras.layers.Reshape(
+            target_shape=(max_encoder_timesteps, max_transitions, 1)
+        )(encoder_time_spent)
 
-        # Apply TimeDistributed Conv1D to process each U matrix
-        x = TimeDistributed(Conv1D(filters=16, kernel_size=3, activation='relu', padding='same'))(encoder_U_masked)
-        x = TimeDistributed(Conv1D(filters=32, kernel_size=3, activation='relu', padding='same'))(x)
-        x = TimeDistributed(Flatten())(x)  # Flatten to combine transitions and bins
+        # Apply masking to time spent
+        encoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(encoder_time_spent_expanded)
 
-        # Concatenate deltaQ inputs
-        x = Concatenate(axis=-1)(
-            [x, encoder_deltaQ_input])  # Shape: (batch_size, encoder_timesteps, 32*transitions*bins + 1)
+        # Interaction via element-wise multiplication
+        encoder_interaction = keras.layers.Concatenate()(
+            [encoder_bin_embedding, encoder_time_spent_masked]
+        )
 
-        # Incorporate initial Q into each time step
-        # Expand initial Q to match encoder_timesteps
-        initial_Q_expanded = keras.layers.RepeatVector(encoder_timesteps)(initial_Q_input)
-        x = Concatenate(axis=-1)([x, initial_Q_expanded])  # Shape: (batch_size, encoder_timesteps, ... + 1)
+        # Process each timestep with Convolutional Layers
+        encoder_features = keras.layers.TimeDistributed(
+            keras.Sequential([
+                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1'),
+                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2'),
+                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
+                keras.layers.Flatten(),
+            ]),
+            name="encoder_convolution",
+        )(encoder_interaction)
 
-        # ============================
-        # 3. Encoder Recurrent Layer
-        # ============================
-
-        encoder_lstm = LSTM(128, return_state=True, return_sequences=False)
-        encoder_outputs, state_h, state_c = encoder_lstm(x)
-        encoder_states = [state_h, state_c]
-
-        # ============================
-        # 4. Decoder Inputs
-        # ============================
-
-        # Input for U matrices in decoder
-        decoder_U_input = Input(shape=(decoder_timesteps, transitions * bins), name='decoder_U_input')
-
-        # Input for deltaQ in decoder (during training, use true deltaQ; during inference, use predicted deltaQ)
-        decoder_deltaQ_input = Input(shape=(decoder_timesteps, 1), name='decoder_deltaQ_input')
-
-        # Masking for decoder U input
-        decoder_U_masked = Masking(mask_value=0.0)(decoder_U_input)
-
-        # ============================
-        # 5. Decoder Convolutional Layers
-        # ============================
-
-        # Apply TimeDistributed Conv1D to process each U matrix in decoder
-        y = TimeDistributed(Conv1D(filters=16, kernel_size=3, activation='relu', padding='same'))(decoder_U_masked)
-        y = TimeDistributed(Conv1D(filters=32, kernel_size=3, activation='relu', padding='same'))(y)
-        y = TimeDistributed(Flatten())(y)  # Flatten to combine transitions and bins
-
-        # Concatenate deltaQ inputs
-        y = Concatenate(axis=-1)(
-            [y, decoder_deltaQ_input])  # Shape: (batch_size, decoder_timesteps, 32*transitions*bins + 1)
+        # Concatenate flattened features with encoder_capacity_delta
+        encoder_combined_features = keras.layers.Concatenate(name="encoder_feature_concat")(
+            [encoder_features, encoder_capacity_delta]
+        )
 
         # ============================
-        # 6. Decoder Recurrent Layer
+        # 2. Encoder LSTM Layer with Masking
         # ============================
 
-        decoder_lstm = LSTM(128, return_sequences=True, return_state=False)
-        decoder_outputs = decoder_lstm(y, initial_state=encoder_states)  # Use encoder states as initial states
+        encoder_lstm = keras.layers.LSTM(
+            units=8, return_sequences=False, return_state=True, name="encoder_lstm"
+        )
+        encoder_output, state_h, state_c = encoder_lstm(encoder_combined_features)
 
         # ============================
-        # 7. Output Layer
+        # 3. Decoder Inputs
         # ============================
 
-        # Predict deltaQ for each time step
-        deltaQ_pred = TimeDistributed(Dense(1, activation='linear'), name='deltaQ_output')(decoder_outputs)
+        # Input for decoder bin indices (sequence of transitions for decoder)
+        decoder_bin_indices = keras.layers.Input(
+            shape=(max_decoder_timesteps, max_transitions), name="decoder_bin_indices"
+        )
+
+        # Input for time spent in bins (corresponding to decoder bin indices)
+        decoder_time_spent = keras.layers.Input(
+            shape=(max_decoder_timesteps, max_transitions), name="decoder_time_spent"
+        )
+
+        # Embedding for decoder bin indices with masking
+        decoder_bin_embedding = keras.layers.TimeDistributed(
+            keras.layers.Embedding(
+                input_dim=bins + 1,  # +1 for padding
+                output_dim=embedding_dim,
+                mask_zero=True,  # Enables masking for padded values
+            ),
+            name="decoder_embedding",
+        )(decoder_bin_indices)
+
+        # Reshape time spent input to match embedding dimensions
+        decoder_time_spent_expanded = keras.layers.Reshape(
+            target_shape=(max_decoder_timesteps, max_transitions, 1)
+        )(decoder_time_spent)
+
+        # Apply masking to time spent
+        decoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(decoder_time_spent_expanded)
+
+        # Interaction via element-wise multiplication
+        decoder_interaction = keras.layers.Concatenate()(
+            [decoder_bin_embedding, decoder_time_spent_masked]
+        )
+
+        # Process each timestep with Convolutional Layers
+        decoder_features = keras.layers.TimeDistributed(
+            keras.Sequential([
+                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Decoder_Convo1'),
+                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Decoder_Convo2'),
+                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Decoder_Convo3'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
+                keras.layers.Flatten(),
+            ]),
+            name="decoder_convolution",
+        )(decoder_interaction)
 
         # ============================
-        # 8. Building the Model
+        # 4. Decoder LSTM Layer with Initial States
         # ============================
 
-        # Define the model with encoder and decoder inputs
-        model = Model(inputs=[encoder_U_input, encoder_deltaQ_input, initial_Q_input,
-                              decoder_U_input, decoder_deltaQ_input],
-                      outputs=deltaQ_pred)
+        decoder_lstm = keras.layers.LSTM(
+            units=8, return_sequences=True, return_state=False, name="decoder_lstm"
+        )
+        decoder_outputs = decoder_lstm(
+            decoder_features, initial_state=[state_h, state_c]
+        )
 
         # ============================
-        # 9. Compile the Model
+        # 5. Output Layer
         # ============================
 
-        learning_rate = self.config['model_specifications']['learning_rate']
+        deltaQ_pred = keras.layers.TimeDistributed(
+            keras.layers.Dense(1, activation="linear"), name="deltaQ_output"
+        )(decoder_outputs)
+
+        # ============================
+        # 6. Build and Compile the Model
+        # ============================
+
+        model = keras.models.Model(
+            inputs=[
+                encoder_bin_indices,
+                encoder_time_spent,
+                encoder_capacity_delta,
+                decoder_bin_indices,
+                decoder_time_spent,
+            ],
+            outputs=deltaQ_pred,
+        )
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-        model.compile(optimizer=optimizer,
-                      loss='mean_squared_error',
-                      metrics=['mean_absolute_error', 'mean_squared_error'])
+        model.compile(
+            optimizer=optimizer,
+            loss=type_of_loss,
+            metrics=["mean_absolute_error", "mean_squared_error"],
+        )
 
-        # ============================
-        # 10. Save Model Summary
-        # ============================
-
-        model_summary_path = os.path.join(self.model_dir, 'model_summary.txt')
-        with open(model_summary_path, 'w') as f:
-            model.summary(print_fn=lambda x: f.write(x + '\n'))
-
-        # ============================
-        # 11. Return the Model
-        # ============================
+        # Save model summary
+        model_summary_path = os.path.join(self.model_dir, "model_summary.txt")
+        with open(model_summary_path, "w") as f:
+            model.summary(print_fn=lambda x: f.write(x + "\n"))
 
         self.model = model
         return self.model
@@ -633,6 +684,131 @@ class Model:
             'time_spent_input': padded_val_time_spent,
             'previous_capacity_input': val_previous_capacity
         }
+
+        # Train the model
+        self.model.fit(
+            x=train_inputs,
+            y=train_targets,
+            epochs=self.config['model_specifications']['epochs'],
+            batch_size=self.config['model_specifications']['batch_size'],
+            validation_data=(val_inputs, val_targets),
+            callbacks=[early_stopping, tensorboard_callback, model_checkpoint_callback],
+            verbose=1
+        )
+
+    def pad_transitions(self, sequences, max_transitions):
+        """
+        Pad or truncate transitions at each timestep to ensure each timestep has exactly max_transitions entries.
+        sequences: List of samples (N), each is a list of timesteps (T), each timestep is a list/array of variable length transitions.
+        Returns: A new list of samples with each timestep padded to max_transitions.
+        """
+        padded = []
+        for sample in sequences:
+            padded_sample = []
+            for timestep_data in sample:
+                if len(timestep_data) < max_transitions:
+                    # Pad with zeros at the end
+                    padded_timestep = np.pad(timestep_data, (0, max_transitions - len(timestep_data)), 'constant',
+                                             constant_values=0)
+                else:
+                    # Truncate if longer than max_transitions
+                    padded_timestep = timestep_data[:max_transitions]
+                padded_sample.append(padded_timestep)
+            padded.append(np.array(padded_sample, dtype='float32'))
+        return padded
+
+    def pad_and_mask_data(self, data_split, max_encoder_timesteps, max_decoder_timesteps, max_transitions,
+                          pre_pad_encoder=False):
+        """
+        Pad transitions to max_transitions, then pad encoder and decoder sequences to max_encoder_timesteps and max_decoder_timesteps respectively.
+
+        data_split: dictionary with keys 'encoder_inputs', 'decoder_inputs', 'decoder_outputs'.
+        Returns: (inputs, targets) tuple of padded arrays ready for model input.
+        """
+        # Encoder
+        enc_bin_indices = self.pad_transitions(data_split['encoder_inputs']['bin_indices'], max_transitions)
+        enc_time_spent = self.pad_transitions(data_split['encoder_inputs']['timebins'], max_transitions)
+        # enc_capacity_diff = self.pad_transitions(data_split['encoder_inputs']['capacity_difference'], max_transitions)
+
+        # Decoder
+        dec_bin_indices = self.pad_transitions(data_split['decoder_inputs']['bin_indices'], max_transitions)
+        dec_time_spent = self.pad_transitions(data_split['decoder_inputs']['timebins'], max_transitions)
+        # dec_targets = self.pad_transitions(data_split['decoder_outputs']['capacity_difference'], max_transitions)
+
+        # Now pad along the timesteps dimension
+        enc_padding_type = 'pre'
+
+        enc_bin_indices_padded = pad_sequences(enc_bin_indices, maxlen=max_encoder_timesteps, padding=enc_padding_type,
+                                               value=0.0, dtype='float32')
+        enc_time_spent_padded = pad_sequences(enc_time_spent, maxlen=max_encoder_timesteps, padding=enc_padding_type,
+                                              value=0.0, dtype='float32')
+        enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
+                                                 maxlen=max_encoder_timesteps,padding=enc_padding_type,
+                                                 value=0.0, dtype='float32')
+        # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
+        enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
+
+
+        dec_padding_type = 'post'
+
+        dec_bin_indices_padded = pad_sequences(dec_bin_indices, maxlen=max_decoder_timesteps,
+                                               padding=dec_padding_type, value=0.0, dtype='float32')
+        dec_time_spent_padded = pad_sequences(dec_time_spent, maxlen=max_decoder_timesteps,
+                                              padding=dec_padding_type, value=0.0, dtype='float32')
+        dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
+                                           maxlen=max_decoder_timesteps, padding=dec_padding_type,
+                                           value=0.0, dtype='float32')
+
+        # Reshape targets to (batch_size, max_decoder_timesteps, 1)
+        dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
+
+        # Convert to appropriate dtypes
+        # enc_bin_indices_padded = enc_bin_indices_padded.astype('int32')
+        # enc_time_spent_padded = enc_time_spent_padded.astype('float32')
+        # enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float32')
+        # dec_bin_indices_padded = dec_bin_indices_padded.astype('int32')
+        # dec_time_spent_padded = dec_time_spent_padded.astype('float32')
+        # dec_targets_padded = dec_targets_padded.astype('float32')
+
+        inputs = {
+            'encoder_bin_indices': enc_bin_indices_padded,
+            'encoder_time_spent': enc_time_spent_padded,
+            'encoder_capacity_delta': enc_capacity_diff_padded,
+            'decoder_bin_indices': dec_bin_indices_padded,
+            'decoder_time_spent': dec_time_spent_padded
+        }
+
+        targets = dec_targets_padded
+        return inputs, targets
+
+    def train_sequence_to_sequence_model_with_padding_vector_and_convolution(self, data: Dict[str, Any],max_encoder_timesteps: int, max_decoder_timesteps: int, max_transitions: int):
+        """
+        Train the sequence-to-sequence model using provided training and validation data with two-level padding and masking.
+        """
+
+        # Preprocess and pad training and validation data
+        train_inputs, train_targets = self.pad_and_mask_data(data['train'], max_encoder_timesteps, max_decoder_timesteps, max_transitions, pre_pad_encoder=False)
+        val_inputs, val_targets = self.pad_and_mask_data(data['validation'], max_encoder_timesteps, max_decoder_timesteps, max_transitions, pre_pad_encoder=False)
+
+        # Callbacks
+        early_stopping = keras.callbacks.EarlyStopping(
+            monitor=self.monitor_loss,
+            patience=self.config['model_specifications']['early_stopping_patience'],
+            restore_best_weights=True
+        )
+
+        tensorboard_callback = keras.callbacks.TensorBoard(
+            log_dir=self.tensorboard_log_dir,
+            histogram_freq=1
+        )
+
+        model_checkpoint_callback = keras.callbacks.ModelCheckpoint(
+            filepath=os.path.join(self.checkpoints_dir, 'model.keras'),
+            monitor=self.monitor_loss,
+            save_best_only=True,
+            mode='min',
+            verbose=1
+        )
 
         # Train the model
         self.model.fit(

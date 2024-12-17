@@ -53,11 +53,16 @@ def main():
 
     # Scale data and split into training and testing sets
     scaled_data = data_processing.scale_data(time_bins_and_transition_data, min_max_values)
-    shuffled_and_split_data, test_cells_id = data_processing.shuffle_and_split_data(scaled_data)
+
+    if config['sequence_to_sequence'] == True:
+        train_val_test_data, test_cells_id = data_processing.prepare_data_sequence_to_sequence(scaled_data)
+        shuffled_and_split_data, seq_lengths = data_processing.shuffle_and_split_data_sequence_to_sequence(train_val_test_data)
+    else:
+        shuffled_and_split_data, test_cells_id = data_processing.shuffle_and_split_data(scaled_data)
 
     # Initialize model and evaluator
     model = Model(config=config)
-    model_evaluator = ModelEvaluator(config=config)
+    model_evaluator = ModelEvaluator(config=config, model_instance=model)
 
     # Load or build and train the model based on configuration
     if config['model_config']['trained_model'] == True and config['paths']['trained_model'] != '':
@@ -87,12 +92,33 @@ def main():
         else:
             max_sequence_length = int(min_max_values['max_sequence_length'])
             no_of_input_features = len(data_processing.bin_mapping)
-            model.build_vector_model_embedded_convo(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
-            model.train_vector_model_TCN(train_data=shuffled_and_split_data['train'],
-                                     val_data=shuffled_and_split_data['validation'],
-                                     max_sequence_length=max_sequence_length)
-            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
-                                           max_sequence_length=max_sequence_length, test_cells=test_cells_id)
+
+            if config['sequence_to_sequence'] == True:
+                max_encoder_timesteps = int(max([data["encoder_max"] for data_type, data in seq_lengths.items()]))
+                max_decoder_timesteps = int(max([data["decoder_max"] for data_type, data in seq_lengths.items()]))
+
+                model.build_sequence_to_sequence_model_with_padding_vector_and_convolution(max_encoder_timesteps=max_encoder_timesteps,
+                                                                          max_decoder_timesteps=max_decoder_timesteps,
+                                                                          max_transitions=max_sequence_length,
+                                                                          bins=no_of_input_features)
+
+                model.train_sequence_to_sequence_model_with_padding_vector_and_convolution(data=shuffled_and_split_data,
+                                                                                           max_encoder_timesteps = max_encoder_timesteps,
+                                                                                           max_decoder_timesteps = max_decoder_timesteps,
+                                                                                           max_transitions=max_sequence_length)
+
+                model_evaluator.evaluate_sequence_to_sequence_model(model=model.model,
+                                                                    train_val_test_data=train_val_test_data,
+                                                                    max_encoder_timesteps = max_encoder_timesteps,
+                                                                    max_decoder_timesteps = max_decoder_timesteps,
+                                                                    max_transitions = max_sequence_length)
+            else:
+                model.build_sequence_to_sequence_model_vector(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+                model.train_vector_model_TCN(train_data=shuffled_and_split_data['train'],
+                                         val_data=shuffled_and_split_data['validation'],
+                                         max_sequence_length=max_sequence_length)
+                model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                               max_sequence_length=max_sequence_length, test_cells=test_cells_id)
 
     # Save updated configuration with min_max_values
     config['min_max_values'] = min_max_values
