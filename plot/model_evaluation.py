@@ -137,8 +137,8 @@ class ModelEvaluator:
                     # Sequence length without padding
                     decoder_sequence_length_without_padding = len(cycle_no)
                     q_pred = q_pred[:decoder_sequence_length_without_padding].tolist()
-                    dq_true = dq_true[:decoder_sequence_length_without_padding].tolist()
-                    dq_pred = dq_pred[:decoder_sequence_length_without_padding].tolist()
+                    dq_true = self.to_list(dq_true[:decoder_sequence_length_without_padding])
+                    dq_pred = self.to_list(dq_pred[:decoder_sequence_length_without_padding])
 
                     # Compute per-sequence metrics
                     seq_metrics = self._compute_metrics(q_true, q_pred, dq_true, dq_pred)
@@ -205,6 +205,14 @@ class ModelEvaluator:
                 pickle.dump(all_data_to_save, f)
 
         return aggregated_predictions
+
+    def to_list(self, tensor_or_array):
+        if isinstance(tensor_or_array, tf.Tensor):
+            return tensor_or_array.numpy().tolist()
+        elif isinstance(tensor_or_array, np.ndarray):
+            return tensor_or_array.tolist()
+        else:
+            raise TypeError(f"Expected tf.Tensor or np.ndarray, but got {type(tensor_or_array)}")
 
     def _compute_metrics(self, q_actual, q_predict, dq_actual, dq_predict):
         # Convert lists to numpy arrays for arithmetic

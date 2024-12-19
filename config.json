@@ -1,5 +1,5 @@
 {
-    "experiment_name": "trial_seq_to_seq_embedded_8_convo_10E_all_freq10hour_noscaling_001l_B128_MSE_343bins",
+    "experiment_name": "temp_seq_to_seq_embedded_8_convo_100E_all_freq10hour_5part_noscaling_001l_B16_MAE_343bins",
     "scalar_vector_exp_flag": "embedded",
     "sequence_to_sequence": true,
     "paths": {
@@ -10,8 +10,7 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results"
     },
     "cells": {
-        "train_cells": ["RW4"],
-        "test_cells": ["RW1"]
+        "cells_omit": ["b2c3", "b2c11", "b2c18", "b1c0", "b1c1", "b1c4", "b1c37", "b1c18"]
     },
     "nominal_capacity": 1.1,
     "signals": {
@@ -58,11 +57,11 @@
         "trained_model": false,
         "embedding_size": 8,
         "monitor": "val_loss",
-        "type_of_loss": "mean_squared_error"
+        "type_of_loss": "mean_absolute_error"
     },
     "model_specifications": {
-        "epochs": 5,
-        "batch_size": 32,
+        "epochs": 1,
+        "batch_size": 8,
         "test_train_cells_ratio": 0.3,
         "val_train_cycles_ratio": 0.2,
         "max_no_of_sequences_per_cell": 3,
@@ -108,6 +107,7 @@
         "1": [0.5],
         "2": [0.2, 0.8],
         "3": [0.2, 0.5, 0.8],
-        "4": [0.1, 0.3, 0.6, 0.9]
+        "4": [0.1, 0.3, 0.6, 0.9],
+        "5": [0.2, 0.3, 0.5, 0.7, 0.9]
     }
 }

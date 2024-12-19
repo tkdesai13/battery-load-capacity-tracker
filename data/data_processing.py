@@ -157,37 +157,47 @@ class DataProcessor:
     def load_and_binning_data(self) -> Dict[str, Dict[str, Any]]:
         """
         Iterates through each pickle file in the data_path, processes each batch of cell data,
-        and structures the processed data into a dictionary, including batch numbers.
+        and structures the processed data into a dictionary, excluding omitted cells.
 
-        :return: The preprocessed data structured as a dictionary, with batch numbers as cell types.
+        :return: The preprocessed data structured as a dictionary, with batch numbers as keys
+                 and cell data as nested dictionaries.
         """
         data_path = self.config['paths']['data']
         preprocessed_data = {}
+        cells_to_omit = set(self.config.get('cells', {}).get('cells_omit', []))
+
+        # Check if the data path exists
+        if not os.path.isdir(data_path):
+            raise FileNotFoundError(f"The data path {data_path} does not exist.")
 
         # Iterate over all .pkl files in the data directory
-        all_files = os.listdir(data_path)
-        for file_name in all_files[:1]:
-            if file_name.endswith('.pkl'):
-                batch_no = self._extract_batch_number(file_name)  # Function to extract batch number from the file name
-                print(f"Processing batch {batch_no} from {file_name}")
+        for file_name in os.listdir(data_path):
+            if not file_name.endswith('.pkl'):
+                continue  # Skip non-pickle files
 
-                # Load the pickle file
-                file_path = os.path.join(data_path, file_name)
+            batch_no = self._extract_batch_number(file_name)
+            print(f"Processing batch {batch_no} from {file_name}")
+
+            file_path = os.path.join(data_path, file_name)
+            try:
                 with open(file_path, 'rb') as f:
                     batch_data = pickle.load(f)
+            except Exception as e:
+                print(f"Failed to load {file_path}: {e}")
+                continue  # Skip to the next file if loading fails
 
-                # Initialize batch in preprocessed_data
-                preprocessed_data[batch_no] = {}
+            preprocessed_data[batch_no] = {}
 
-                # Process each cell in the batch
-                for cell_name, cell_data in batch_data.items():
-                    print(f"Processing cell {cell_name} in batch {batch_no}")
+            # Corrected loop starts here
+            for cell_name, cell_data in batch_data.items():
+                if cell_name in cells_to_omit:
+                    print(f"Omitting cell {cell_name} in batch {batch_no}")
+                    continue  # Skip processing this cell
 
-                    # Send the cell data to the preprocess function
-                    processed_cell_data = self._process_cell_data(cell_data, batch_no)
-
-                    # Store the processed cell data under the batch_no
-                    preprocessed_data[batch_no][cell_name] = processed_cell_data
+                print(f"Processing cell {cell_name} in batch {batch_no}")
+                processed_cell_data = self._process_cell_data(cell_data, batch_no)
+                preprocessed_data[batch_no][cell_name] = processed_cell_data
+            # Corrected loop ends here
 
         return preprocessed_data
 

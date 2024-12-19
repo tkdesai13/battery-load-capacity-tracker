@@ -11,6 +11,10 @@ from keras.layers import Input, Conv1D, LSTM, Dense, Concatenate, TimeDistribute
 from keras.models import Model
 from typing import Dict, Any
 
+from tensorflow.keras import mixed_precision
+mixed_precision.set_global_policy('mixed_float16')
+
+
 # # Set random seeds for reproducibility
 # seed=42
 # np.random.seed(seed)
@@ -369,11 +373,11 @@ class Model:
         )(encoder_time_spent)
 
         # Apply masking to time spent
-        encoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(encoder_time_spent_expanded)
+        # encoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(encoder_time_spent_expanded)
 
         # Interaction via element-wise multiplication
         encoder_interaction = keras.layers.Concatenate()(
-            [encoder_bin_embedding, encoder_time_spent_masked]
+            [encoder_bin_embedding, encoder_time_spent_expanded]
         )
 
         # Process each timestep with Convolutional Layers
@@ -382,7 +386,7 @@ class Model:
                 keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1'),
                 keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2'),
                 keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3'),
-                # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
                 keras.layers.Flatten(),
             ]),
             name="encoder_convolution",
@@ -432,11 +436,11 @@ class Model:
         )(decoder_time_spent)
 
         # Apply masking to time spent
-        decoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(decoder_time_spent_expanded)
+        # decoder_time_spent_masked = keras.layers.Masking(mask_value=0.0)(decoder_time_spent_expanded)
 
         # Interaction via element-wise multiplication
         decoder_interaction = keras.layers.Concatenate()(
-            [decoder_bin_embedding, decoder_time_spent_masked]
+            [decoder_bin_embedding, decoder_time_spent_expanded]
         )
 
         # Process each timestep with Convolutional Layers
@@ -445,7 +449,7 @@ class Model:
                 keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Decoder_Convo1'),
                 keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Decoder_Convo2'),
                 keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Decoder_Convo3'),
-                # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
                 keras.layers.Flatten(),
             ]),
             name="decoder_convolution",
@@ -739,28 +743,30 @@ class Model:
         enc_padding_type = 'pre'
 
         enc_bin_indices_padded = pad_sequences(enc_bin_indices, maxlen=max_encoder_timesteps, padding=enc_padding_type,
-                                               value=0.0, dtype='float32')
+                                               value=0, dtype='int16')
         enc_time_spent_padded = pad_sequences(enc_time_spent, maxlen=max_encoder_timesteps, padding=enc_padding_type,
-                                              value=0.0, dtype='float32')
+                                              value=0.0, dtype='float16')
         enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
                                                  maxlen=max_encoder_timesteps,padding=enc_padding_type,
-                                                 value=0.0, dtype='float32')
+                                                 value=0.0, dtype='float16')
         # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
         enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
+        enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float16')
 
 
         dec_padding_type = 'post'
 
         dec_bin_indices_padded = pad_sequences(dec_bin_indices, maxlen=max_decoder_timesteps,
-                                               padding=dec_padding_type, value=0.0, dtype='float32')
+                                               padding=dec_padding_type, value=0, dtype='int16')
         dec_time_spent_padded = pad_sequences(dec_time_spent, maxlen=max_decoder_timesteps,
-                                              padding=dec_padding_type, value=0.0, dtype='float32')
+                                              padding=dec_padding_type, value=0.0, dtype='float16')
         dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
                                            maxlen=max_decoder_timesteps, padding=dec_padding_type,
-                                           value=0.0, dtype='float32')
+                                           value=0.0, dtype='float16')
 
         # Reshape targets to (batch_size, max_decoder_timesteps, 1)
         dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
+        dec_targets_padded = dec_targets_padded.astype('float16')
 
         # Convert to appropriate dtypes
         # enc_bin_indices_padded = enc_bin_indices_padded.astype('int32')
@@ -771,14 +777,14 @@ class Model:
         # dec_targets_padded = dec_targets_padded.astype('float32')
 
         inputs = {
-            'encoder_bin_indices': enc_bin_indices_padded,
-            'encoder_time_spent': enc_time_spent_padded,
-            'encoder_capacity_delta': enc_capacity_diff_padded,
-            'decoder_bin_indices': dec_bin_indices_padded,
-            'decoder_time_spent': dec_time_spent_padded
+            'encoder_bin_indices': tf.convert_to_tensor(enc_bin_indices_padded),
+            'encoder_time_spent': tf.convert_to_tensor(enc_time_spent_padded),
+            'encoder_capacity_delta': tf.convert_to_tensor(enc_capacity_diff_padded),
+            'decoder_bin_indices': tf.convert_to_tensor(dec_bin_indices_padded),
+            'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded)
         }
 
-        targets = dec_targets_padded
+        targets = tf.convert_to_tensor(dec_targets_padded)
         return inputs, targets
 
     def train_sequence_to_sequence_model_with_padding_vector_and_convolution(self, data: Dict[str, Any],max_encoder_timesteps: int, max_decoder_timesteps: int, max_transitions: int):
