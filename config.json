@@ -1,5 +1,5 @@
 {
-    "experiment_name": "temp_seq_to_seq_embedded_8_convo_100E_all_freq10hour_5part_noscaling_001l_B16_MAE_343bins",
+    "experiment_name": "second_temp_seq_to_seq_embedded_8_convo_100E_all_freq10hour_5part_noscaling_001l_B16_MAE_343bins",
     "scalar_vector_exp_flag": "embedded",
     "sequence_to_sequence": true,
     "paths": {
@@ -55,6 +55,7 @@
         "output_signal": ["Voltage"],
         "sampling_frequency": 1,
         "trained_model": false,
+        "latent_state_neuron": 8,
         "embedding_size": 8,
         "monitor": "val_loss",
         "type_of_loss": "mean_absolute_error"

@@ -171,7 +171,7 @@ class DataProcessor:
             raise FileNotFoundError(f"The data path {data_path} does not exist.")
 
         # Iterate over all .pkl files in the data directory
-        for file_name in os.listdir(data_path):
+        for file_name in os.listdir(data_path)[:1]:
             if not file_name.endswith('.pkl'):
                 continue  # Skip non-pickle files
 

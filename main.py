@@ -74,22 +74,38 @@ def main():
                                        max_sequence_length=max_sequence_length, test_cells=test_cells_id)
     else:
         if config['scalar_vector_exp_flag'] == 'scalar':
-            no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
-            model.build_scalar_model(no_of_input_features=no_of_input_features)
-            model.train_model(train_data=shuffled_and_split_data['train'],
-                              val_data=shuffled_and_split_data['validation'])
-            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
-                                           test_cells=test_cells_id)
+
+            if config['sequence_to_sequence'] == True:
+
+                # code here for sequence to sequence model
+                pass
+
+            else:
+                no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
+                model.build_scalar_model(no_of_input_features=no_of_input_features)
+                model.train_model(train_data=shuffled_and_split_data['train'],
+                                  val_data=shuffled_and_split_data['validation'])
+                model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                               test_cells=test_cells_id)
         elif config['scalar_vector_exp_flag'] == 'vector':
-            max_sequence_length = int(min_max_values['max_transitions'])
-            no_of_input_features = len(data_processing.bin_mapping)
-            model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
-            model.train_vector_model(train_data=shuffled_and_split_data['train'],
-                                     val_data=shuffled_and_split_data['validation'],
-                                     max_sequence_length=max_sequence_length)
-            model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
-                                           max_sequence_length=max_sequence_length, test_cells=test_cells_id)
-        else:
+
+            if config['sequence_to_sequence'] == True:
+
+                # code here for sequence to sequence model
+                pass
+
+            else:
+
+                max_sequence_length = int(min_max_values['max_transitions'])
+                no_of_input_features = len(data_processing.bin_mapping)
+                model.build_vector_model(max_sequence_length=max_sequence_length, no_of_input_features=no_of_input_features)
+                model.train_vector_model(train_data=shuffled_and_split_data['train'],
+                                         val_data=shuffled_and_split_data['validation'],
+                                         max_sequence_length=max_sequence_length)
+                model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
+                                               max_sequence_length=max_sequence_length, test_cells=test_cells_id)
+        elif config['scalar_vector_exp_flag'] == 'vector_embedded':
+
             max_sequence_length = int(min_max_values['max_sequence_length'])
             no_of_input_features = len(data_processing.bin_mapping)
 

@@ -337,6 +337,7 @@ class Model:
         embedding_dim = self.config['model_config']['embedding_size']
         type_of_loss = self.config['model_config']['type_of_loss']
         learning_rate = self.config['model_specifications']['learning_rate']
+        latent_state_neuron = self.config['model_config']['latent_state_neuron']
 
         # ============================
         # 1. Encoder Inputs
@@ -358,14 +359,29 @@ class Model:
         )
 
         # Embedding for bin indices with masking
-        encoder_bin_embedding = keras.layers.TimeDistributed(
+
+        timebin_encoding_layer = keras.layers.TimeDistributed(
             keras.layers.Embedding(
                 input_dim=bins + 1,  # +1 for padding
                 output_dim=embedding_dim,
                 mask_zero=True,  # Enables masking for padded values
             ),
             name="encoder_embedding",
-        )(encoder_bin_indices)
+        )
+
+        convoluting_encoded_data = keras.layers.TimeDistributed(
+            keras.Sequential([
+                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1'),
+                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2'),
+                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
+                keras.layers.Flatten(),
+            ]),
+            name="encoder_convolution",
+        )
+
+
+        encoder_bin_embedding = timebin_encoding_layer(encoder_bin_indices)
 
         # Reshape time spent input to match embedding dimensions
         encoder_time_spent_expanded = keras.layers.Reshape(
@@ -380,17 +396,19 @@ class Model:
             [encoder_bin_embedding, encoder_time_spent_expanded]
         )
 
-        # Process each timestep with Convolutional Layers
-        encoder_features = keras.layers.TimeDistributed(
-            keras.Sequential([
-                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1'),
-                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2'),
-                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3'),
-                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
-                keras.layers.Flatten(),
-            ]),
-            name="encoder_convolution",
-        )(encoder_interaction)
+        # # Process each timestep with Convolutional Layers
+        # encoder_features = keras.layers.TimeDistributed(
+        #     keras.Sequential([
+        #         keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Convo1'),
+        #         keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Convo2'),
+        #         keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Convo3'),
+        #         # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Convo4'),
+        #         keras.layers.Flatten(),
+        #     ]),
+        #     name="encoder_convolution",
+        # )(encoder_interaction)
+
+        encoder_features = convoluting_encoded_data(encoder_interaction)
 
         # Concatenate flattened features with encoder_capacity_delta
         encoder_combined_features = keras.layers.Concatenate(name="encoder_feature_concat")(
@@ -402,7 +420,7 @@ class Model:
         # ============================
 
         encoder_lstm = keras.layers.LSTM(
-            units=8, return_sequences=False, return_state=True, name="encoder_lstm"
+            units=latent_state_neuron, return_sequences=False, return_state=True, name="encoder_lstm"
         )
         encoder_output, state_h, state_c = encoder_lstm(encoder_combined_features)
 
@@ -420,15 +438,17 @@ class Model:
             shape=(max_decoder_timesteps, max_transitions), name="decoder_time_spent"
         )
 
-        # Embedding for decoder bin indices with masking
-        decoder_bin_embedding = keras.layers.TimeDistributed(
-            keras.layers.Embedding(
-                input_dim=bins + 1,  # +1 for padding
-                output_dim=embedding_dim,
-                mask_zero=True,  # Enables masking for padded values
-            ),
-            name="decoder_embedding",
-        )(decoder_bin_indices)
+        # # Embedding for decoder bin indices with masking
+        # decoder_bin_embedding = keras.layers.TimeDistributed(
+        #     keras.layers.Embedding(
+        #         input_dim=bins + 1,  # +1 for padding
+        #         output_dim=embedding_dim,
+        #         mask_zero=True,  # Enables masking for padded values
+        #     ),
+        #     name="decoder_embedding",
+        # )(decoder_bin_indices)
+
+        decoder_bin_embedding = timebin_encoding_layer(decoder_bin_indices)
 
         # Reshape time spent input to match embedding dimensions
         decoder_time_spent_expanded = keras.layers.Reshape(
@@ -443,24 +463,26 @@ class Model:
             [decoder_bin_embedding, decoder_time_spent_expanded]
         )
 
-        # Process each timestep with Convolutional Layers
+        # # Process each timestep with Convolutional Layers
         decoder_features = keras.layers.TimeDistributed(
             keras.Sequential([
                 keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Decoder_Convo1'),
                 keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Decoder_Convo2'),
                 keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Decoder_Convo3'),
-                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
+                # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
                 keras.layers.Flatten(),
             ]),
             name="decoder_convolution",
         )(decoder_interaction)
+
+        # decoder_features = convoluting_encoded_data(decoder_interaction)
 
         # ============================
         # 4. Decoder LSTM Layer with Initial States
         # ============================
 
         decoder_lstm = keras.layers.LSTM(
-            units=8, return_sequences=True, return_state=False, name="decoder_lstm"
+            units=latent_state_neuron, return_sequences=True, return_state=False, name="decoder_lstm"
         )
         decoder_outputs = decoder_lstm(
             decoder_features, initial_state=[state_h, state_c]
