@@ -335,10 +335,10 @@ class Model:
 
         return self.model
 
-    def build_sequence_to_sequence_model_for_matrix_scalar(self,
-                                                                             max_encoder_timesteps: int,
-                                                                             max_decoder_timesteps: int,
-                                                                             bins: int):
+    def build_sequence_to_sequence_model_with_table_or_cube_data(self,
+                                                                 max_encoder_timesteps: int,
+                                                                 max_decoder_timesteps: int,
+                                                                 bins: int):
         """
         Build and compile an Encoder-Decoder Sequence-to-Sequence model using convolution-based feature extraction
         with masking to handle padding.
@@ -437,11 +437,11 @@ class Model:
         return self.model
 
 
-    def build_sequence_to_sequence_model_with_padding_vector_and_convolution(self,
-                                                                             max_encoder_timesteps: int,
-                                                                             max_decoder_timesteps: int,
-                                                                             max_transitions: int,
-                                                                             bins: int):
+    def build_sequence_to_sequence_model_with_matrix_data(self,
+                                                          max_encoder_timesteps: int,
+                                                          max_decoder_timesteps: int,
+                                                          max_transitions: int,
+                                                          bins: int):
         """
         Build and compile an Encoder-Decoder Sequence-to-Sequence model using convolution-based feature extraction
         with masking to handle padding.
@@ -505,10 +505,10 @@ class Model:
         # Process each timestep with Convolutional Layers
         encoder_features = keras.layers.TimeDistributed(
             keras.Sequential([
-                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Encoder_Convo1'),
-                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Encoder_Convo2'),
-                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Encoder_Convo3'),
-                # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Encoder_Convo4'),
+                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Encoder_Convo1'),
+                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='relu', name='Encoder_Convo2'),
+                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='relu', name='Encoder_Convo3'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='relu', name='Encoder_Convo4'),
                 keras.layers.Flatten(),
             ]),
             name="encoder_convolution",
@@ -562,10 +562,10 @@ class Model:
         # # Process each timestep with Convolutional Layers
         decoder_features = keras.layers.TimeDistributed(
             keras.Sequential([
-                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='tanh', name='Decoder_Convo1'),
-                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='tanh', name='Decoder_Convo2'),
-                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='tanh', name='Decoder_Convo3'),
-                # keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='tanh', name='Decoder_Convo4'),
+                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Decoder_Convo1'),
+                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='relu', name='Decoder_Convo2'),
+                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='relu', name='Decoder_Convo3'),
+                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='relu', name='Decoder_Convo4'),
                 keras.layers.Flatten(),
             ]),
             name="decoder_convolution",
@@ -606,6 +606,7 @@ class Model:
             ],
             outputs=deltaQ_pred,
         )
+        # optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
         optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
         model.compile(
             optimizer=optimizer,
@@ -1311,66 +1312,8 @@ class Model:
         Returns: (inputs, targets) tuple of padded arrays ready for model input.
         """
 
-        if self.config['scalar_vector_exp_flag'] == 'vector_embedded':
-            # Encoder
-            enc_bin_indices = self.pad_transitions(data_split['encoder_inputs']['bin_indices'], max_transitions)
-            enc_time_spent = self.pad_transitions(data_split['encoder_inputs']['timebins'], max_transitions)
-            # enc_capacity_diff = self.pad_transitions(data_split['encoder_inputs']['capacity_difference'], max_transitions)
-
-            # Decoder
-            dec_bin_indices = self.pad_transitions(data_split['decoder_inputs']['bin_indices'], max_transitions)
-            dec_time_spent = self.pad_transitions(data_split['decoder_inputs']['timebins'], max_transitions)
-            # dec_targets = self.pad_transitions(data_split['decoder_outputs']['capacity_difference'], max_transitions)
-
-            # Now pad along the timesteps dimension
-            enc_padding_type = 'pre'
-
-            enc_bin_indices_padded = pad_sequences(enc_bin_indices, maxlen=max_encoder_timesteps,
-                                                   padding=enc_padding_type,
-                                                   value=0, dtype='int32')
-            enc_time_spent_padded = pad_sequences(enc_time_spent, maxlen=max_encoder_timesteps,
-                                                  padding=enc_padding_type,
-                                                  value=0.0, dtype='float32')
-            enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
-                                                     maxlen=max_encoder_timesteps, padding=enc_padding_type,
-                                                     value=0.0, dtype='float32')
-            # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
-            enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
-            enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float32')
-
-            dec_padding_type = 'post'
-
-            dec_bin_indices_padded = pad_sequences(dec_bin_indices, maxlen=max_decoder_timesteps,
-                                                   padding=dec_padding_type, value=0, dtype='int32')
-            dec_time_spent_padded = pad_sequences(dec_time_spent, maxlen=max_decoder_timesteps,
-                                                  padding=dec_padding_type, value=0.0, dtype='float32')
-            dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
-                                               maxlen=max_decoder_timesteps, padding=dec_padding_type,
-                                               value=0.0, dtype='float32')
-
-            # Reshape targets to (batch_size, max_decoder_timesteps, 1)
-            dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
-            dec_targets_padded = dec_targets_padded.astype('float32')
-
-            inputs = {
-                'encoder_bin_indices': tf.convert_to_tensor(enc_bin_indices_padded),
-                'encoder_time_spent': tf.convert_to_tensor(enc_time_spent_padded),
-                'encoder_capacity_delta': tf.convert_to_tensor(enc_capacity_diff_padded),
-                'decoder_bin_indices': tf.convert_to_tensor(dec_bin_indices_padded),
-                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded)
-            }
-
-            targets = tf.convert_to_tensor(dec_targets_padded, dtype='float32')
-            q_initial = tf.convert_to_tensor(
-                [each_sequence[0] for each_sequence in data_split['decoder_inputs']['previous_capacity']],
-                dtype='float32')
-            q_initial_expanded = tf.expand_dims(q_initial, axis=1)  # Shape: (batch_size, 1)
-            # q_initial_expanded = tf.expand_dims(q_initial_expanded, axis=-1)  # Shape: (batch_size,1,1)
-
-            return inputs, targets, q_initial_expanded
-
-        # Scalar data type
-        else:
+        # If scalar_vector_exp_flag is 'table' or 'cube'
+        if self.config['scalar_vector_exp_flag'] == 'table' or self.config['scalar_vector_exp_flag'] == 'cube':
 
             enc_time_spent = data_split['encoder_inputs']['timebins']
             dec_time_spent = data_split['decoder_inputs']['timebins']
@@ -1428,10 +1371,67 @@ class Model:
 
             return inputs, targets, q_initial_expanded
 
+        else: # scalar_vector_exp_flag == 'matrix'
+
+            # Encoder
+            enc_bin_indices = self.pad_transitions(data_split['encoder_inputs']['bin_indices'], max_transitions)
+            enc_time_spent = self.pad_transitions(data_split['encoder_inputs']['timebins'], max_transitions)
+            # enc_capacity_diff = self.pad_transitions(data_split['encoder_inputs']['capacity_difference'], max_transitions)
+
+            # Decoder
+            dec_bin_indices = self.pad_transitions(data_split['decoder_inputs']['bin_indices'], max_transitions)
+            dec_time_spent = self.pad_transitions(data_split['decoder_inputs']['timebins'], max_transitions)
+            # dec_targets = self.pad_transitions(data_split['decoder_outputs']['capacity_difference'], max_transitions)
+
+            # Now pad along the timesteps dimension
+            enc_padding_type = 'pre'
+
+            enc_bin_indices_padded = pad_sequences(enc_bin_indices, maxlen=max_encoder_timesteps,
+                                                   padding=enc_padding_type,
+                                                   value=0, dtype='int32')
+            enc_time_spent_padded = pad_sequences(enc_time_spent, maxlen=max_encoder_timesteps,
+                                                  padding=enc_padding_type,
+                                                  value=0.0, dtype='float32')
+            enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
+                                                     maxlen=max_encoder_timesteps, padding=enc_padding_type,
+                                                     value=0.0, dtype='float32')
+            # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
+            enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
+            enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float32')
+
+            dec_padding_type = 'post'
+
+            dec_bin_indices_padded = pad_sequences(dec_bin_indices, maxlen=max_decoder_timesteps,
+                                                   padding=dec_padding_type, value=0, dtype='int32')
+            dec_time_spent_padded = pad_sequences(dec_time_spent, maxlen=max_decoder_timesteps,
+                                                  padding=dec_padding_type, value=0.0, dtype='float32')
+            dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
+                                               maxlen=max_decoder_timesteps, padding=dec_padding_type,
+                                               value=0.0, dtype='float32')
+
+            # Reshape targets to (batch_size, max_decoder_timesteps, 1)
+            dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
+            dec_targets_padded = dec_targets_padded.astype('float32')
+
+            inputs = {
+                'encoder_bin_indices': tf.convert_to_tensor(enc_bin_indices_padded),
+                'encoder_time_spent': tf.convert_to_tensor(enc_time_spent_padded),
+                'encoder_capacity_delta': tf.convert_to_tensor(enc_capacity_diff_padded),
+                'decoder_bin_indices': tf.convert_to_tensor(dec_bin_indices_padded),
+                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded)
+            }
+
+            targets = tf.convert_to_tensor(dec_targets_padded, dtype='float32')
+            q_initial = tf.convert_to_tensor(
+                [each_sequence[0] for each_sequence in data_split['decoder_inputs']['previous_capacity']],
+                dtype='float32')
+            q_initial_expanded = tf.expand_dims(q_initial, axis=1)  # Shape: (batch_size, 1)
+            # q_initial_expanded = tf.expand_dims(q_initial_expanded, axis=-1)  # Shape: (batch_size,1,1)
+
+            return inputs, targets, q_initial_expanded
 
 
-
-    def train_sequence_to_sequence_model_for_matrix_scalar(self, data: Dict[str, Any],max_encoder_timesteps: int, max_decoder_timesteps: int):
+    def train_sequence_to_sequence_model_with_table_or_cube_data(self, data: Dict[str, Any],max_encoder_timesteps: int, max_decoder_timesteps: int):
         """
         Train the sequence-to-sequence model using provided training and validation data with two-level padding and masking.
         """
@@ -1471,7 +1471,7 @@ class Model:
             verbose=1
         )
 
-    def train_sequence_to_sequence_model_with_padding_vector_and_convolution(self, data: Dict[str, Any],max_encoder_timesteps: int, max_decoder_timesteps: int, max_transitions: int):
+    def train_sequence_to_sequence_model_with_matrix_data(self, data: Dict[str, Any], max_encoder_timesteps: int, max_decoder_timesteps: int, max_transitions: int):
         """
         Train the sequence-to-sequence model using provided training and validation data with two-level padding and masking.
         """

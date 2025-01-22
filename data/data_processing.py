@@ -1,17 +1,10 @@
 import os
 import itertools
 import pickle
-import random
-from datetime import datetime
 import scipy.io
 import numpy as np
 from collections import defaultdict
 from typing import Dict, Any, Tuple, List
-
-# import torch
-# import torch.nn as nn
-# import torch_geometric
-# from torch_geometric.data import Data
 
 # Set random seeds for reproducibility
 seed = 20
@@ -54,8 +47,13 @@ class DataProcessor:
     def __init__(self, config: dict):
         self.config = config
         self.voltage_bins, self.current_bins, self.temperature_bins, self.num_bins_per_dim = self.initialize_bins()
-        # self.bin_mapping = self.create_joint_bin_mapping()  # Initialize bin mapping for tuple-based indexing
-        self.bin_mapping = self.create_marginal_bin_mapping()  # Initialize bin mapping for marginal indexing
+
+        # Initialize bin mapping for tuple-based indexing
+        if self.config['scalar_vector_exp_flag'] == 'table':
+            self.bin_mapping = self.create_marginal_bin_mapping()
+        else:
+            self.bin_mapping = self.create_joint_bin_mapping()
+
         self.transitions_per_bin_pair = self.initialize_transitions_per_bin_pair()
 
         # Initialize global min/max trackers for all bins and transitions
@@ -193,7 +191,7 @@ class DataProcessor:
             raise FileNotFoundError(f"The data path {data_path} does not exist.")
 
         # Iterate over all .pkl files in the data directory
-        for file_name in os.listdir(data_path)[:1]:
+        for file_name in os.listdir(data_path):
             if not file_name.endswith('.pkl'):
                 continue  # Skip non-pickle files
 
@@ -343,7 +341,7 @@ class DataProcessor:
         temperature_data = np.concatenate(step_data["temperature"], axis=1).flatten()
 
         # Pass the data to the appropriate binning function
-        if self.config['scalar_vector_exp_flag'] == 'scalar':
+        if self.config['scalar_vector_exp_flag'] == 'table':
             time_bins = self.bin_marginal_data_vector(voltage_data, current_data, temperature_data, time_data)
             transitions = []  # Empty list for marginal case since no transitions are tracked
         else:
