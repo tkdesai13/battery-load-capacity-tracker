@@ -88,7 +88,7 @@ class ModelEvaluator:
 
     def evaluate_sequence_to_sequence_model(self, model, train_val_test_data: Dict[str, Dict[str, Any]],
                                             max_encoder_timesteps: int, max_decoder_timesteps: int,
-                                            max_transitions: int, output_filename_prefix: str = 'seq2seq_results'):
+                                            max_transitions: int = 1, output_filename_prefix: str = 'seq2seq_results'):
         """
         Evaluate the sequence-to-sequence model where each cell has multiple sequences.
         This version also plots encoder data and uses per-sequence metrics for plot titles.
@@ -107,11 +107,11 @@ class ModelEvaluator:
                 num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
 
                 # Pad and mask all sequences at once using pad_and_mask_data
-                inputs, targets = self.model_instance.pad_and_mask_data(
+                inputs, targets,_ = self.model_instance.pad_and_mask_data(
                     cell_data, max_encoder_timesteps, max_decoder_timesteps, max_transitions, pre_pad_encoder=False
                 )
                 # predictions: (num_sequences, max_decoder_timesteps, 1)
-                predictions = model.predict(inputs, verbose=0)
+                predictions = model.model.predict(inputs, verbose=0)
                 dq_pred_all = predictions[:, :, 0]  # (num_sequences, max_decoder_timesteps)
                 dq_true_all = targets[:, :, 0]  # (num_sequences, max_decoder_timesteps)
 
@@ -205,6 +205,346 @@ class ModelEvaluator:
                 pickle.dump(all_data_to_save, f)
 
         return aggregated_predictions
+
+    def evaluate_full_sequence_to_sequence_model_with_previous_capacity(self, model, train_val_test_data: Dict[str, Dict[str, Any]],
+                                            max_encoder_timesteps: int, max_decoder_timesteps: int,
+                                            max_transitions: int, output_filename_prefix: str = 'seq2seq_results'):
+        """
+        Evaluate the sequence-to-sequence model where each cell has multiple sequences.
+        This version also plots encoder data and uses per-sequence metrics for plot titles.
+        """
+
+        aggregated_predictions = {
+            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'validation': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []}
+        }
+
+        split_cell_predictions = {'train': {}, 'validation': {}, 'test': {}}
+
+        for split_type in ['train', 'validation', 'test']:
+            for cell_name, cell_data in train_val_test_data[split_type].items():
+                print(f"\nEvaluating {split_type} and {cell_name} data...")
+                num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
+
+                # Pad and mask all sequences at once using pad_and_mask_data
+                inputs, targets, q_initial_expanded = self.model_instance.pad_and_mask_data(
+                    cell_data, max_encoder_timesteps, max_decoder_timesteps, max_transitions, pre_pad_encoder=False
+                )
+                # predictions: (num_sequences, max_decoder_timesteps, 1)
+                encoder_states = model.encoder_model([inputs["encoder_bin_indices"],
+                                                      inputs["encoder_time_spent"],
+                                                      inputs["encoder_capacity_delta"]], training=False)
+                decoder_state_h, decoder_state_c = encoder_states
+
+                # Initialize previous_Q with Q_initial_batch
+                previous_Q = q_initial_expanded  # Shape: (batch_size, 1, 1)
+
+                # Collect predictions for the batch
+                predictions = []
+
+                for t in range(max_decoder_timesteps):  # Typically 1 for step-by-step
+                    # Current timestep inputs
+                    current_decoder_bin = inputs["decoder_bin_indices"][:, t:t + 1, :]  # Shape: (batch_size, 1, max_transitions)
+                    current_decoder_time_spent = inputs["decoder_time_spent"][:, t:t + 1,
+                                                 :]  # Shape: (batch_size, 1, max_transitions)
+
+                    # Decoder Forward Pass
+                    deltaQ_pred, new_state_h, new_state_c = model.decoder_model([
+                        current_decoder_bin,
+                        current_decoder_time_spent,
+                        previous_Q,
+                        decoder_state_h,
+                        decoder_state_c
+                    ], training=False)
+
+                    # Update Q
+                    previous_Q = previous_Q + deltaQ_pred  # Shape: (batch_size, 1, 1)
+
+                    # Append predictions
+                    predictions.append(deltaQ_pred)
+
+                    # Update decoder states
+                    decoder_state_h, decoder_state_c = new_state_h, new_state_c
+
+                # Concatenate predictions along the time axis
+                predictions = tf.concat(predictions, axis=1)
+
+                dq_pred_all = predictions # (num_sequences, max_decoder_timesteps)
+                dq_true_all = targets[:, :, 0]  # (num_sequences, max_decoder_timesteps)
+
+                cell_sequences_predictions = []
+                cell_q_actual_all, cell_q_predict_all = [], []
+                cell_dq_actual_all, cell_dq_predict_all = [], []
+                cell_cycle_no_all = []
+
+                for seq_idx in range(num_sequences):
+                    dq_pred = dq_pred_all[seq_idx]
+                    dq_true = dq_true_all[seq_idx]
+
+                    # Extract initial_q from the last encoder timestep capacity
+                    initial_q = cell_data['decoder_inputs']['previous_capacity'][seq_idx][0]
+
+                    # Get cycle_no for decoder from decoder_inputs['cycle_no'][seq_idx]
+                    cycle_no = cell_data['decoder_inputs']['cycle_no'][seq_idx]
+
+                    # Reconstruct Q
+                    q_pred = np.cumsum(dq_pred) + initial_q
+                    q_true = cell_data['decoder_inputs']['capacity'][seq_idx]
+
+                    # Sequence length without padding
+                    decoder_sequence_length_without_padding = len(cycle_no)
+                    q_pred = q_pred[:decoder_sequence_length_without_padding].tolist()
+                    dq_true = self.to_list(dq_true[:decoder_sequence_length_without_padding])
+                    dq_pred = self.to_list(dq_pred[:decoder_sequence_length_without_padding])
+
+                    # Compute per-sequence metrics
+                    seq_metrics = self._compute_metrics(q_true, q_pred, dq_true, dq_pred)
+
+                    cell_sequences_predictions.append({
+                        'cycle_no': cycle_no,
+                        'q_actual': q_true,
+                        'q_predict': q_pred,
+                        'dq_actual': dq_true,
+                        'dq_predict': dq_pred,
+                        'metrics': seq_metrics
+                    })
+
+                    # Accumulate for cell-level metrics
+                    cell_q_actual_all.extend(q_true)
+                    cell_q_predict_all.extend(q_pred)
+                    cell_dq_actual_all.extend(dq_true)
+                    cell_dq_predict_all.extend(dq_pred)
+                    cell_cycle_no_all.extend(cycle_no)
+
+                # Compute cell-level metrics
+                cell_metrics = self._compute_metrics(cell_q_actual_all, cell_q_predict_all, cell_dq_actual_all,
+                                                     cell_dq_predict_all)
+
+                # Update aggregated predictions
+                aggregated_predictions[split_type]['q_actual'].extend(cell_q_actual_all)
+                aggregated_predictions[split_type]['q_predict'].extend(cell_q_predict_all)
+                aggregated_predictions[split_type]['dq_actual'].extend(cell_dq_actual_all)
+                aggregated_predictions[split_type]['dq_predict'].extend(cell_dq_predict_all)
+                aggregated_predictions[split_type]['cycle_no'].extend(cell_cycle_no_all)
+
+                # Store cell predictions and metrics
+                # Note: We still store cell-level metrics but now each sequence has its own metrics too
+                split_cell_predictions[split_type][cell_name] = {
+                    'sequences': cell_sequences_predictions,
+                    'metrics': cell_metrics,
+                    'encoder_inputs': cell_data['encoder_inputs']  # needed for plotting encoder part
+                }
+
+            # Compute overall metrics for this split
+            split_metrics = self._compute_metrics(
+                aggregated_predictions[split_type]['q_actual'],
+                aggregated_predictions[split_type]['q_predict'],
+                aggregated_predictions[split_type]['dq_actual'],
+                aggregated_predictions[split_type]['dq_predict']
+            )
+
+            # Save overall metrics
+            with open(os.path.join(self.model_dir, f'{split_type}_overall_metrics.json'), 'w') as f:
+                json.dump(split_metrics, f, indent=4)
+
+            # Plot results for this split
+            self._plot_sequences_bokeh(split_type, split_cell_predictions[split_type],
+                                       f'{output_filename_prefix}_{split_type}.html')
+
+            # After all splits are processed, save *everything*:
+            # This includes the original input data and all predictions/metrics
+            all_data_to_save = {
+                'train_val_test_data': train_val_test_data,
+                'split_cell_predictions': split_cell_predictions
+            }
+
+            with open(os.path.join(self.model_dir, 'all_cell_data_with_predictions.pkl'), 'wb') as f:
+                pickle.dump(all_data_to_save, f)
+
+        return aggregated_predictions
+
+    def temp_evaluate_full_sequence_to_sequence_model_with_previous_capacity(self, model, train_val_test_data: Dict[str, Dict[str, Any]],
+                                            max_encoder_timesteps: int, max_decoder_timesteps: int,
+                                            max_transitions: int, output_filename_prefix: str = 'seq2seq_results'):
+        """
+        Evaluate the sequence-to-sequence model using separate encoder and decoder models.
+        This version processes data in batches, ensures correct data types, and computes metrics accordingly.
+
+        :param train_val_test_data: Dictionary containing 'train', 'validation', and 'test' datasets.
+        :param max_encoder_timesteps: Maximum number of timesteps for the encoder.
+        :param max_decoder_timesteps: Maximum number of timesteps for the decoder (typically 1 for step-by-step).
+        :param max_transitions: Maximum number of transitions in the bin matrix.
+        :param output_filename_prefix: Prefix for output files (e.g., plots).
+        :return: Aggregated predictions and metrics.
+        """
+
+        aggregated_predictions = {
+            'train': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'validation': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []},
+            'test': {'q_actual': [], 'q_predict': [], 'dq_actual': [], 'dq_predict': [], 'cycle_no': []}
+        }
+
+        split_cell_predictions = {'train': {}, 'validation': {}, 'test': {}}
+
+        for split_type in ['train', 'validation', 'test']:
+            print(f"\nEvaluating {split_type} data...")
+            for cell_name, cell_data in train_val_test_data[split_type].items():
+                num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
+
+                # Pad and mask all sequences at once
+                inputs, targets, initial_Q = self.model_instance.pad_and_mask_data(
+                    cell_data, max_encoder_timesteps, max_decoder_timesteps, max_transitions
+                )
+
+                # Prepare batch-wise data
+                batch_size = self.config['model_specifications']['batch_size']
+                dataset = tf.data.Dataset.from_tensor_slices((
+                    inputs['encoder_bin_indices'],
+                    inputs['encoder_time_spent'],
+                    inputs['encoder_capacity_delta'],
+                    inputs['decoder_bin_indices'],
+                    inputs['decoder_time_spent'],
+                    initial_Q
+                )).batch(batch_size)
+
+                # Initialize lists to collect predictions
+                cell_q_actual_all, cell_q_predict_all = [], []
+                cell_dq_actual_all, cell_dq_predict_all = [], []
+                cell_cycle_no_all = []
+                cell_sequences_predictions = []
+
+                for batch in dataset:
+                    encoder_bin, encoder_time, encoder_delta, decoder_bin, decoder_time_spent, Q_initial_batch = batch
+
+                    # Encoder Forward Pass
+                    encoder_states = model.encoder_model([encoder_bin, encoder_time, encoder_delta], training=False)
+                    decoder_state_h, decoder_state_c = encoder_states
+
+                    # Initialize previous_Q with Q_initial_batch
+                    previous_Q = Q_initial_batch  # Shape: (batch_size, 1, 1)
+
+                    # Collect predictions for the batch
+                    predictions = []
+
+                    for t in range(max_decoder_timesteps):  # Typically 1 for step-by-step
+                        # Current timestep inputs
+                        current_decoder_bin = decoder_bin[:, t:t + 1, :]  # Shape: (batch_size, 1, max_transitions)
+                        current_decoder_time_spent = decoder_time_spent[:, t:t + 1,
+                                                     :]  # Shape: (batch_size, 1, max_transitions)
+
+                        # Decoder Forward Pass
+                        deltaQ_pred, new_state_h, new_state_c = model.decoder_model([
+                            current_decoder_bin,
+                            current_decoder_time_spent,
+                            previous_Q,
+                            decoder_state_h,
+                            decoder_state_c
+                        ], training=False)
+
+                        # Update Q
+                        previous_Q = previous_Q + deltaQ_pred  # Shape: (batch_size, 1, 1)
+
+                        # Append predictions
+                        predictions.append(deltaQ_pred)
+
+                        # Update decoder states
+                        decoder_state_h, decoder_state_c = new_state_h, new_state_c
+
+                    # Concatenate predictions along the time axis
+                    predictions = tf.concat(predictions, axis=1)  # Shape: (batch_size, max_decoder_timesteps, 1)
+
+                    # Reconstruct Q values
+                    q_pred_batch = tf.cumsum(predictions,
+                                             axis=1) + Q_initial_batch  # Shape: (batch_size, max_decoder_timesteps, 1)
+                    q_true_batch = targets[:, :, 0]  # Shape: (batch_size, max_decoder_timesteps)
+                    dq_true_batch = tf.cast(targets[:, :, 0], tf.float32)  # Assuming dq_true is the same as q_true
+                    dq_pred_batch = tf.cast(predictions[:, :, 0],
+                                            tf.float32)  # Shape: (batch_size, max_decoder_timesteps)
+
+                    # Convert tensors to numpy arrays for metric calculations
+                    q_pred_batch = q_pred_batch.numpy().reshape(-1).tolist()
+                    q_true_batch = q_true_batch.numpy().reshape(-1).tolist()
+                    dq_pred_batch = dq_pred_batch.numpy().reshape(-1).tolist()
+                    dq_true_batch = dq_true_batch.numpy().reshape(-1).tolist()
+
+                    # Assuming cycle_no is provided in cell_data['decoder_inputs']['cycle_no']
+                    cycle_no_batch = cell_data['decoder_inputs']['cycle_no']
+
+                    # Append to aggregated lists
+                    aggregated_predictions[split_type]['q_actual'].extend(q_true_batch)
+                    aggregated_predictions[split_type]['q_predict'].extend(q_pred_batch)
+                    aggregated_predictions[split_type]['dq_actual'].extend(dq_true_batch)
+                    aggregated_predictions[split_type]['dq_predict'].extend(dq_pred_batch)
+                    aggregated_predictions[split_type]['cycle_no'].extend(cycle_no_batch)
+
+                    # Compute per-sequence metrics
+                    seq_metrics = self._compute_metrics(q_true_batch, q_pred_batch, dq_true_batch, dq_pred_batch)
+
+                    cell_sequences_predictions.append({
+                        'cycle_no': cycle_no_batch,
+                        'q_actual': q_true_batch,
+                        'q_predict': q_pred_batch,
+                        'dq_actual': dq_true_batch,
+                        'dq_predict': dq_pred_batch,
+                        'metrics': seq_metrics
+                    })
+
+                    # Accumulate for cell-level metrics
+                    cell_q_actual_all.extend(q_true_batch)
+                    cell_q_predict_all.extend(q_pred_batch)
+                    cell_dq_actual_all.extend(dq_true_batch)
+                    cell_dq_predict_all.extend(dq_pred_batch)
+                    cell_cycle_no_all.extend(cycle_no_batch)
+
+                # Compute cell-level metrics
+                cell_metrics = self._compute_metrics(cell_q_actual_all, cell_q_predict_all, cell_dq_actual_all,
+                                                     cell_dq_predict_all)
+
+                # Update aggregated predictions (already done above)
+
+                # Store cell predictions and metrics
+                split_cell_predictions[split_type][cell_name] = {
+                    'sequences': cell_sequences_predictions,
+                    'metrics': cell_metrics,
+                    'encoder_inputs': cell_data['encoder_inputs']  # needed for plotting encoder part
+                }
+
+            # After processing all splits and cells, compute overall metrics and generate plots
+            for split_type in ['train', 'validation', 'test']:
+                print(f"\nAggregating metrics for {split_type} data...")
+                # Compute overall metrics for this split
+                split_metrics = self._compute_metrics(
+                    aggregated_predictions[split_type]['q_actual'],
+                    aggregated_predictions[split_type]['q_predict'],
+                    aggregated_predictions[split_type]['dq_actual'],
+                    aggregated_predictions[split_type]['dq_predict']
+                )
+
+                # Save overall metrics
+                metrics_path = os.path.join(self.model_dir, f'{split_type}_overall_metrics.json')
+                with open(metrics_path, 'w') as f:
+                    json.dump(split_metrics, f, indent=4)
+                print(f"Saved overall metrics for {split_type} at {metrics_path}")
+
+                # Plot results for this split
+                plot_path = os.path.join(self.model_dir, f'{output_filename_prefix}_{split_type}.html')
+                self._plot_sequences_bokeh(split_type, split_cell_predictions[split_type], plot_path)
+                print(f"Saved plots for {split_type} at {plot_path}")
+
+            # Save all predictions and metrics
+            all_data_to_save = {
+                'train_val_test_data': train_val_test_data,
+                'split_cell_predictions': split_cell_predictions,
+                'aggregated_predictions': aggregated_predictions
+            }
+
+            all_data_path = os.path.join(self.model_dir, 'all_cell_data_with_predictions.pkl')
+            with open(all_data_path, 'wb') as f:
+                pickle.dump(all_data_to_save, f)
+            print(f"Saved all predictions and metrics at {all_data_path}")
+
+            return aggregated_predictions
 
     def to_list(self, tensor_or_array):
         if isinstance(tensor_or_array, tf.Tensor):

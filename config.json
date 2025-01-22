@@ -1,6 +1,6 @@
 {
-    "experiment_name": "second_temp_seq_to_seq_embedded_8_convo_100E_all_freq10hour_5part_noscaling_001l_B16_MAE_343bins",
-    "scalar_vector_exp_flag": "embedded",
+    "experiment_name": "seq_to_seq_table_convo_100E_all_freq10hour_3part_noscaling_001l_B16_MAE_343bins",
+    "scalar_vector_exp_flag": "scalar",
     "sequence_to_sequence": true,
     "paths": {
         "trained_model": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results/updated_TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
@@ -61,7 +61,7 @@
         "type_of_loss": "mean_absolute_error"
     },
     "model_specifications": {
-        "epochs": 1,
+        "epochs": 5,
         "batch_size": 8,
         "test_train_cells_ratio": 0.3,
         "val_train_cycles_ratio": 0.2,

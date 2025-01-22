@@ -1,4 +1,5 @@
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import numpy as np
 import tensorflow as tf
 import random
@@ -7,10 +8,15 @@ import warnings
 from data.data_processing import DataProcessor
 from models.model import Model
 from plot.model_evaluation import ModelEvaluator
+import logging
+
+# Ignore  warnings
+warnings.filterwarnings("ignore")
+tf.get_logger().setLevel(logging.ERROR)
 
 
 # Set random seeds for reproducibility
-def set_seeds(seed=42):
+def set_seeds(seed=20):
     np.random.seed(seed)
     tf.random.set_seed(seed)
     random.seed(seed)
@@ -75,10 +81,26 @@ def main():
     else:
         if config['scalar_vector_exp_flag'] == 'scalar':
 
+            no_of_input_features = len(data_processing.bin_mapping)
+
             if config['sequence_to_sequence'] == True:
 
-                # code here for sequence to sequence model
-                pass
+                max_encoder_timesteps = int(max([data["encoder_max"] for data_type, data in seq_lengths.items()]))
+                max_decoder_timesteps = int(max([data["decoder_max"] for data_type, data in seq_lengths.items()]))
+
+                model.build_sequence_to_sequence_model_for_matrix_scalar(max_encoder_timesteps=max_encoder_timesteps,
+                                                                          max_decoder_timesteps=max_decoder_timesteps,
+                                                                          bins=no_of_input_features)
+
+                model.train_sequence_to_sequence_model_for_matrix_scalar(data=shuffled_and_split_data,
+                                                                                           max_encoder_timesteps = max_encoder_timesteps,
+                                                                                           max_decoder_timesteps = max_decoder_timesteps)
+
+                model_evaluator.evaluate_sequence_to_sequence_model(model=model,
+                                                                    train_val_test_data=train_val_test_data,
+                                                                    max_encoder_timesteps = max_encoder_timesteps,
+                                                                    max_decoder_timesteps = max_decoder_timesteps)
+
 
             else:
                 no_of_input_features = len(shuffled_and_split_data['train']['timebins'][0])
@@ -87,7 +109,7 @@ def main():
                                   val_data=shuffled_and_split_data['validation'])
                 model_evaluator.evaluate_model(model=model.model, data=scaled_data, min_max_values=min_max_values,
                                                test_cells=test_cells_id)
-        elif config['scalar_vector_exp_flag'] == 'vector':
+        elif config['scalar_vector_exp_flag'] == '':
 
             if config['sequence_to_sequence'] == True:
 
@@ -123,7 +145,7 @@ def main():
                                                                                            max_decoder_timesteps = max_decoder_timesteps,
                                                                                            max_transitions=max_sequence_length)
 
-                model_evaluator.evaluate_sequence_to_sequence_model(model=model.model,
+                model_evaluator.evaluate_sequence_to_sequence_model(model=model,
                                                                     train_val_test_data=train_val_test_data,
                                                                     max_encoder_timesteps = max_encoder_timesteps,
                                                                     max_decoder_timesteps = max_decoder_timesteps,

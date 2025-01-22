@@ -14,7 +14,7 @@ from typing import Dict, Any, Tuple, List
 # from torch_geometric.data import Data
 
 # Set random seeds for reproducibility
-seed = 42
+seed = 20
 rng = np.random.default_rng(seed=seed)
 
 
@@ -54,7 +54,8 @@ class DataProcessor:
     def __init__(self, config: dict):
         self.config = config
         self.voltage_bins, self.current_bins, self.temperature_bins, self.num_bins_per_dim = self.initialize_bins()
-        self.bin_mapping = self.create_bin_mapping()  # Initialize bin mapping for tuple-based indexing
+        # self.bin_mapping = self.create_joint_bin_mapping()  # Initialize bin mapping for tuple-based indexing
+        self.bin_mapping = self.create_marginal_bin_mapping()  # Initialize bin mapping for marginal indexing
         self.transitions_per_bin_pair = self.initialize_transitions_per_bin_pair()
 
         # Initialize global min/max trackers for all bins and transitions
@@ -87,7 +88,7 @@ class DataProcessor:
 
         return voltage_bins, current_bins, temperature_bins, num_bins_per_dim
 
-    def create_bin_mapping(self) -> dict:
+    def create_joint_bin_mapping(self) -> dict:
         """
         Create a mapping from bin index tuples to voltage, current, and temperature intervals.
         """
@@ -100,6 +101,27 @@ class DataProcessor:
                 'current_interval': self.current_bins[j],
                 'temperature_interval': self.temperature_bins[k]
             }
+        return bin_mapping
+
+    def create_marginal_bin_mapping(self) -> dict:
+        """
+        Create a mapping from single bin indices to intervals for voltage, current, and temperature separately.
+        """
+        bin_mapping = {}
+
+        # Map voltage bins
+        for i in range(len(self.voltage_bins)):
+            bin_mapping[i] = {'type': 'voltage', 'interval': self.voltage_bins[i]}
+
+        # Map current bins starting after voltage
+        for j in range(len(self.current_bins)):
+            bin_mapping[j + len(self.voltage_bins)] = {'type': 'current', 'interval': self.current_bins[j]}
+
+        # Map temperature bins starting after current
+        for k in range(len(self.temperature_bins)):
+            bin_mapping[k + len(self.voltage_bins) + len(self.current_bins)] = {'type': 'temperature',
+                                                                                'interval': self.temperature_bins[k]}
+
         return bin_mapping
 
     def initialize_transitions_per_bin_pair(self):
@@ -320,8 +342,13 @@ class DataProcessor:
         current_data = np.concatenate(step_data["current"], axis=1).flatten()
         temperature_data = np.concatenate(step_data["temperature"], axis=1).flatten()
 
-        # Pass the data to the _bin_data_vector function
-        time_bins, transitions = self._bin_data_vector(voltage_data, current_data, temperature_data, time_data)
+        # Pass the data to the appropriate binning function
+        if self.config['scalar_vector_exp_flag'] == 'scalar':
+            time_bins = self.bin_marginal_data_vector(voltage_data, current_data, temperature_data, time_data)
+            transitions = []  # Empty list for marginal case since no transitions are tracked
+        else:
+            time_bins, transitions = self._bin_data_vector(voltage_data, current_data, temperature_data, time_data)
+
         return {"time_bins": time_bins, "transitions": transitions}, cumulative_time_for_cell
 
     def _bin_data_vector(self, voltage, current, temperature, time) -> Tuple[list, list]:
@@ -368,6 +395,52 @@ class DataProcessor:
             })
 
         return time_bins_dict, transition_dict
+
+    def bin_marginal_data_vector(self, voltage, current, temperature, time) -> list:
+        """
+        Bin the battery data and calculate time spent in each individual bin for voltage, current, and temperature separately.
+        """
+        v_indices = self._digitize_data(voltage, self.voltage_bins)
+        c_indices = self._digitize_data(current, self.current_bins)
+        t_indices = self._digitize_data(temperature, self.temperature_bins)
+
+        time_diffs = np.diff(time) / 60  # Convert time differences to hours
+
+        marginal_time_bins = []
+
+        # Calculate time spent in voltage bins
+        for i in range(len(self.voltage_bins)):
+            mask = (v_indices[:-1] == i)
+            time_spent = np.sum(time_diffs[mask])
+            marginal_time_bins.append({
+                'bin_index': i,
+                'time_spent': time_spent,
+                'type': 'voltage'
+            })
+
+        # Calculate time spent in current bins
+        offset = len(self.voltage_bins)
+        for j in range(len(self.current_bins)):
+            mask = (c_indices[:-1] == j)
+            time_spent = np.sum(time_diffs[mask])
+            marginal_time_bins.append({
+                'bin_index': j + offset,
+                'time_spent': time_spent,
+                'type': 'current'
+            })
+
+        # Calculate time spent in temperature bins
+        offset = len(self.voltage_bins) + len(self.current_bins)
+        for k in range(len(self.temperature_bins)):
+            mask = (t_indices[:-1] == k)
+            time_spent = np.sum(time_diffs[mask])
+            marginal_time_bins.append({
+                'bin_index': k + offset,
+                'time_spent': time_spent,
+                'type': 'temperature'
+            })
+
+        return marginal_time_bins
 
     def _digitize_data(self, data, bins) -> np.ndarray:
         """
