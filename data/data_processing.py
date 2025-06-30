@@ -6,10 +6,6 @@ import numpy as np
 from collections import defaultdict
 from typing import Dict, Any, Tuple, List
 
-# Set random seeds for reproducibility
-seed = 20
-rng = np.random.default_rng(seed=seed)
-
 
 def matlab_struct_to_dict(matlab_struct: Any) -> dict:
     """
@@ -47,6 +43,7 @@ class DataProcessor:
     def __init__(self, config: dict):
         self.config = config
         self.voltage_bins, self.current_bins, self.temperature_bins, self.num_bins_per_dim = self.initialize_bins()
+        self.rng = np.random.default_rng(seed=config['experiment_seed'])
 
         # Initialize bin mapping for tuple-based indexing
         if self.config['scalar_vector_exp_flag'] == 'table':
@@ -196,6 +193,10 @@ class DataProcessor:
                 continue  # Skip non-pickle files
 
             batch_no = self._extract_batch_number(file_name)
+
+            if batch_no not in self.config['cell_batches']:
+                print(f"Batch {batch_no} is not in the config, skipping.")
+                continue
             print(f"Processing batch {batch_no} from {file_name}")
 
             file_path = os.path.join(data_path, file_name)
@@ -268,6 +269,7 @@ class DataProcessor:
         Preprocess the data for a single cell.
         """
         cumulative_time_for_cell = 0.0
+        cumulative_Ah_throughput_for_cell = 0.0
         processed_data = {}
         accumulated_data = self._initialize_accumulated_data()
 
@@ -290,8 +292,10 @@ class DataProcessor:
                 # if cycle_counter > 1 and not self._is_valid_capacity_change(processed_data, cycle_counter, cycle_data):
                 #     continue
 
-                processed_load_pattern, cumulative_time_for_cell = self._process_load_pattern(accumulated_data,
-                                                                                              cumulative_time_for_cell)
+                processed_load_pattern, cumulative_time_for_cell, cumulative_Ah_throughput_for_cell = (
+                    self._process_load_pattern(accumulated_data,
+                                               cumulative_time_for_cell,
+                                               cumulative_Ah_throughput_for_cell))
 
                 cell_summery_data = cell_data['summary']
 
@@ -300,7 +304,8 @@ class DataProcessor:
                     'accumulated_transitions': processed_load_pattern["transitions"],
                     'ground_truth_cycle': self._process_reference_capacity(cell_summery_data=cell_summery_data,
                                                                            cycle_counter=cycle_counter),
-                    'cumulative_time_at_ground_truth': cumulative_time_for_cell
+                    'cumulative_time_at_ground_truth': cumulative_time_for_cell,
+                    'cumulative_Ah_throughput': cumulative_Ah_throughput_for_cell
                 }
 
                 accumulated_data = self._initialize_accumulated_data()
@@ -318,8 +323,8 @@ class DataProcessor:
         max_change = self.config['data']['ground_truth_cycle_validity']['max_capacity_change']
         return min_change <= capacity_diff <= max_change
 
-    def _process_load_pattern(self, step_data: Dict[str, Any], cumulative_time_for_cell: float) -> tuple[
-        dict[str, list], float]:
+    def _process_load_pattern(self, step_data: Dict[str, Any], cumulative_time_for_cell: float, cumulative_Ah_throughput_for_cell: float) -> \
+    tuple[dict[str, list[Any] | list], float | Any, float]:
         """
         Process the load pattern data by calculating the time spent in each bin and transitions between bins.
         This includes adjusting the time data to form a continuous time series across cycles.
@@ -340,6 +345,11 @@ class DataProcessor:
         current_data = np.concatenate(step_data["current"], axis=1).flatten()
         temperature_data = np.concatenate(step_data["temperature"], axis=1).flatten()
 
+        # delta-t between successive samples  (prepend 0 so lengths match)
+        dt_h = np.diff(time_data, prepend=time_data[0])
+        Ah_this_step = np.sum(np.abs(current_data) * dt_h)  # ∫|I|dt   [Ah]
+        cumulative_Ah_throughput_for_cell += Ah_this_step
+
         # Pass the data to the appropriate binning function
         if self.config['scalar_vector_exp_flag'] == 'table':
             time_bins = self.bin_marginal_data_vector(voltage_data, current_data, temperature_data, time_data)
@@ -347,7 +357,7 @@ class DataProcessor:
         else:
             time_bins, transitions = self._bin_data_vector(voltage_data, current_data, temperature_data, time_data)
 
-        return {"time_bins": time_bins, "transitions": transitions}, cumulative_time_for_cell
+        return {"time_bins": time_bins, "transitions": transitions}, cumulative_time_for_cell, cumulative_Ah_throughput_for_cell
 
     def _bin_data_vector(self, voltage, current, temperature, time) -> Tuple[list, list]:
         """
@@ -358,7 +368,7 @@ class DataProcessor:
         t_indices = self._digitize_data(temperature, self.temperature_bins)
 
         combined_indices = np.stack((v_indices, c_indices, t_indices), axis=-1)
-        time_diffs = np.diff(time) / 60  # Convert time differences to hours
+        time_diffs = np.diff(time)  # Convert time differences to hours
 
         transitions = np.where(np.any(combined_indices[1:] != combined_indices[:-1], axis=1))[0]
 
@@ -402,7 +412,7 @@ class DataProcessor:
         c_indices = self._digitize_data(current, self.current_bins)
         t_indices = self._digitize_data(temperature, self.temperature_bins)
 
-        time_diffs = np.diff(time) / 60  # Convert time differences to hours
+        time_diffs = np.diff(time)   # Convert time differences to hours
 
         marginal_time_bins = []
 
@@ -562,6 +572,7 @@ class DataProcessor:
             'accumulated_transitions': cycle_transition_counts,
             'capacity': current_capacity,
             'cumulative_time_at_ground_truth': cycle_data['cumulative_time_at_ground_truth'],
+            'cumulative_Ah_throughput': cycle_data['cumulative_Ah_throughput'],
             'cycle_no': cycle_data['ground_truth_cycle']['cycle_no'],
             'capacity_diff': capacity_diff,
             'previous_capacity': previous_capacity
@@ -771,6 +782,7 @@ class DataProcessor:
                         'accumulated_transitions': transition_matrix,
                         'capacity': current_capacity,
                         'cumulative_time_at_ground_truth': cycle_data['cumulative_time_at_ground_truth'],
+                        'cumulative_Ah_throughput': cycle_data['cumulative_Ah_throughput'],
                         'cycle_no': cycle_data['ground_truth_cycle']['cycle_no'],
                         'capacity_diff': capacity_diff,
                         'previous_capacity': previous_capacity
@@ -1047,7 +1059,7 @@ class DataProcessor:
             cell_names = list(batch_cells.keys())
 
             # Use RNG to shuffle deterministically
-            shuffled_indices = rng.permutation(len(cell_names))
+            shuffled_indices = self.rng.permutation(len(cell_names))
             cell_names = [cell_names[i] for i in shuffled_indices]
 
             # Split cells into test, train, and validation
@@ -1112,6 +1124,7 @@ class DataProcessor:
                     "previous_capacity": [],
                     "capacity_difference": [],
                     "cumulative_time": [],
+                    "cumulative_Ah":[],
                     "cycle_no": []
                 },
                 "decoder_inputs": {
@@ -1120,6 +1133,7 @@ class DataProcessor:
                     "capacity": [],
                     "previous_capacity": [],
                     "cumulative_time": [],
+                    "cumulative_Ah": [],
                     "cycle_no": [],
                 },
                 "decoder_outputs": {
@@ -1161,6 +1175,7 @@ class DataProcessor:
             encoder_capacity = [cell_data[c]['capacity'] for c in encoder_cycles]
             encoder_previous_capacity = [cell_data[c]['previous_capacity'] for c in encoder_cycles]
             encoder_cumulative_time = [cell_data[c]['cumulative_time_at_ground_truth'] for c in encoder_cycles]
+            encoder_cumulative_Ah = [cell_data[c]['cumulative_Ah_throughput'] for c in encoder_cycles]
             encoder_cycle_no = [cell_data[c]['cycle_no'] for c in encoder_cycles]
 
             # Decoder inputs and outputs
@@ -1170,6 +1185,7 @@ class DataProcessor:
             decoder_capacity = [cell_data[c]['capacity'] for c in decoder_cycles]
             decoder_previous_capacity = [cell_data[c]['previous_capacity'] for c in decoder_cycles]
             decoder_cumulative_time = [cell_data[c]['cumulative_time_at_ground_truth'] for c in decoder_cycles]
+            decoder_cumulative_Ah = [cell_data[c]['cumulative_Ah_throughput'] for c in decoder_cycles]
             decoder_cycle_no = [cell_data[c]['cycle_no'] for c in decoder_cycles]
 
             # Append to the respective cell's structure
@@ -1180,6 +1196,7 @@ class DataProcessor:
             split_data[split_key][cell_name]["encoder_inputs"]["capacity"].append(encoder_capacity)
             split_data[split_key][cell_name]["encoder_inputs"]["previous_capacity"].append(encoder_previous_capacity)
             split_data[split_key][cell_name]["encoder_inputs"]["cumulative_time"].append(encoder_cumulative_time)
+            split_data[split_key][cell_name]["encoder_inputs"]["cumulative_Ah"].append(encoder_cumulative_Ah)
             split_data[split_key][cell_name]["encoder_inputs"]["cycle_no"].append(encoder_cycle_no)
 
             split_data[split_key][cell_name]["decoder_inputs"]["bin_indices"].append(decoder_bin_indices)
@@ -1189,6 +1206,7 @@ class DataProcessor:
             split_data[split_key][cell_name]["decoder_inputs"]["capacity"].append(decoder_capacity)
             split_data[split_key][cell_name]["decoder_inputs"]["previous_capacity"].append(decoder_previous_capacity)
             split_data[split_key][cell_name]["decoder_inputs"]["cumulative_time"].append(decoder_cumulative_time)
+            split_data[split_key][cell_name]["decoder_inputs"]["cumulative_Ah"].append(decoder_cumulative_Ah)
             split_data[split_key][cell_name]["decoder_inputs"]["cycle_no"].append(decoder_cycle_no)
 
     def shuffle_and_split_data_sequence_to_sequence(self, train_val_test_data):
@@ -1219,6 +1237,7 @@ class DataProcessor:
             for cell_name, cell_data in train_val_test_data[split_key].items():
                 num_sequences = int(self.config["model_specifications"]["max_no_of_sequences_per_cell"])
                 for i in range(num_sequences):
+                    print(f"Processing {split_key} cell: {cell_name}, sequence index: {i}")
                     # Add sequences to shuffled_data
                     self._append_sequences(shuffled_data[split_key], cell_data, encoder_input_keys,
                                            decoder_input_keys, decoder_output_keys, i)
@@ -1277,7 +1296,7 @@ class DataProcessor:
         ]
 
         # Shuffle the combined sequences using NumPy's default_rng for reproducibility
-        shuffled_indices = rng.permutation(len(combined_sequences))
+        shuffled_indices = self.rng.permutation(len(combined_sequences))
         combined_sequences = [combined_sequences[i] for i in shuffled_indices]
 
         # Unpack shuffled sequences back into the original structure
@@ -1299,7 +1318,7 @@ class DataProcessor:
         test_size = int(len(cell_names) * test_train_cells_ratio)
 
         # Use numpy RNG for deterministic, cross-platform sampling
-        test_cells = rng.choice(cell_names, size=test_size, replace=False).tolist()
+        test_cells = self.rng.choice(cell_names, size=test_size, replace=False).tolist()
 
         train_cells = [cell for cell in cell_names if cell not in test_cells]
         return test_cells, train_cells
@@ -1341,7 +1360,7 @@ class DataProcessor:
         """
 
         # Shuffle cycles deterministically
-        shuffled_indices = rng.permutation(len(combined_cycles))
+        shuffled_indices = self.rng.permutation(len(combined_cycles))
         combined_cycles = [combined_cycles[i] for i in shuffled_indices]
 
         # Determine split index
@@ -1401,7 +1420,7 @@ class DataProcessor:
             cycles_list = list(cycles.items())
 
             # Shuffle the cycles deterministically
-            shuffled_indices = rng.permutation(len(cycles_list))
+            shuffled_indices = self.rng.permutation(len(cycles_list))
             cycles_list = [cycles_list[i] for i in shuffled_indices]
 
             # Determine split index

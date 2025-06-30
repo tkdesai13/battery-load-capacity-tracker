@@ -101,12 +101,13 @@ def main() -> None:
     Main entry point for training, evaluating, and saving the experiment results
     based on the given configuration.
     """
-    # Set seeds for reproducibility.
-    set_seeds()
 
     # Load configuration and create result directory.
     config = load_config()
     experiment_result_dir = create_experiment_dir(config)
+
+    # Set random seeds for reproducibility.
+    set_seeds(seed=config['experiment_seed'])
 
     # Initialize data processing.
     data_processing = DataProcessor(config=config)

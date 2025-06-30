@@ -367,9 +367,17 @@ class Model:
             shape=(max_encoder_timesteps, 1), name="encoder_capacity_delta"
         )
 
+        # Input for cumulative time spent in bins on the encoder side
+        encoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_cumulative_time_spent")
+
+        # Input for encoder cumulative Ah throughput
+        encoder_cumulative_Ah_throughput = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_cumulative_Ah_throughput")
+
         # Concatenate flattened features with encoder_capacity_delta
         encoder_combined_features = keras.layers.Concatenate(name="encoder_feature_concat")(
-            [encoder_time_spent, encoder_capacity_delta]
+            [encoder_time_spent, encoder_capacity_delta, encoder_cumulative_time_spent, encoder_cumulative_Ah_throughput]
         )
 
         # ============================
@@ -389,6 +397,18 @@ class Model:
         decoder_time_spent = keras.layers.Input(
             shape=(max_decoder_timesteps, bins), name="decoder_time_spent")
 
+        # Input for cumulative time spent in bins on the decoder side
+        decoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_decoder_timesteps, 1), name="decoder_cumulative_time_spent")
+
+        # Input for decoder cumulative Ah throughput
+        decoder_cumulative_Ah_throughput = keras.layers.Input(
+            shape=(max_decoder_timesteps, 1), name="decoder_cumulative_Ah_throughput")
+
+        # Concatenate flattened features with encoder_capacity_delta
+        decoder_combined_features = keras.layers.Concatenate(name="decoder_feature_concat")(
+            [decoder_time_spent, decoder_cumulative_time_spent, decoder_cumulative_Ah_throughput]
+        )
 
         # ============================
         # 4. Decoder LSTM Layer with Initial States
@@ -398,7 +418,7 @@ class Model:
             units=latent_state_neuron, return_sequences=True, return_state=False, name="decoder_lstm"
         )
         decoder_outputs = decoder_lstm(
-            decoder_time_spent, initial_state=[state_h, state_c]
+            decoder_combined_features, initial_state=[state_h, state_c]
         )
 
         # ============================
@@ -417,7 +437,11 @@ class Model:
             inputs=[
                 encoder_time_spent,
                 encoder_capacity_delta,
+                encoder_cumulative_time_spent,
+                encoder_cumulative_Ah_throughput,
                 decoder_time_spent,
+                decoder_cumulative_time_spent,
+                decoder_cumulative_Ah_throughput
             ],
             outputs=deltaQ_pred,
         )
@@ -456,6 +480,25 @@ class Model:
         learning_rate = self.config['model_specifications']['learning_rate']
         latent_state_neuron = self.config['model_config']['latent_state_neuron']
 
+        # helper: one Conv–Norm–ReLU–Pool block
+        def conv_block(filters, k_size, stride, pool, name):
+            return keras.Sequential([
+                keras.layers.Conv1D(filters=filters,
+                                    kernel_size=k_size,
+                                    strides=stride,
+                                    use_bias=False,
+                                    kernel_initializer="he_normal",
+                                    name=f"{name}_conv"),
+                # keras.layers.LayerNormalization(name=f"{name}_ln"),
+                keras.layers.Activation("relu", name=f"{name}_relu"),
+                # keras.layers.MaxPooling1D(pool_size=pool,
+                #                           padding="same",
+                #                           name=f"{name}_pool"),
+                keras.layers.Dropout(0.1, name=f"{name}_drop")  # ← optional, helps regularise
+            ], name=f"{name}_block")
+
+
+
         # ============================
         # 1. Encoder Inputs
         # ============================
@@ -475,8 +518,17 @@ class Model:
             shape=(max_encoder_timesteps, 1), name="encoder_capacity_delta"
         )
 
-        # Embedding for bin indices with masking
+        # Input for encoder cumulative time spent
+        encoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_cumulative_time_spent"
+        )
 
+        # Input for encoder cumulative Ah throughput
+        encoder_cumulative_Ah_throughput = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_cumulative_Ah_throughput"
+        )
+
+        # Embedding for bin indices with masking
         timebin_encoding_layer = keras.layers.TimeDistributed(
             keras.layers.Embedding(
                 input_dim=bins + 1,  # +1 for padding
@@ -502,23 +554,39 @@ class Model:
             [encoder_bin_embedding, encoder_time_spent_expanded]
         )
 
-        # Process each timestep with Convolutional Layers
+        # encoder CNN applied at every timestep
         encoder_features = keras.layers.TimeDistributed(
             keras.Sequential([
-                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Encoder_Convo1'),
-                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='relu', name='Encoder_Convo2'),
-                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='relu', name='Encoder_Convo3'),
-                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='relu', name='Encoder_Convo4'),
-                keras.layers.Flatten(),
-            ]),
-            name="encoder_convolution",
+                conv_block(4, 15, 2, 4, name="enc_b1"),  # wider filters: 16 → 32 → 64 → 128 is common
+                conv_block(8, 25, 2, 4, name="enc_b2"),
+                conv_block(8, 35, 2, 2, name="enc_b3"),
+                conv_block(16, 12, 2, 2, name="enc_b4"),
+                keras.layers.Flatten(name="enc_flat")
+            ], name="encoder_cnn"),
+            name="encoder_convolution"
         )(encoder_interaction)
+
+        # # Process each timestep with Convolutional Layers
+        # encoder_features = keras.layers.TimeDistributed(
+        #     keras.Sequential([
+        #         keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Encoder_Convo1'),
+        #         keras.layers.MaxPooling1D(pool_size=8, name='Encoder_pooling1'),
+        #         keras.layers.Conv1D(filters=3, kernel_size=25, strides=4, activation='relu', name='Encoder_Convo2'),
+        #         keras.layers.MaxPooling1D(pool_size=4, name='Encoder_pooling2'),
+        #         keras.layers.Conv1D(filters=4, kernel_size=35, strides=4, activation='relu', name='Encoder_Convo3'),
+        #         keras.layers.MaxPooling1D(pool_size=2, name='Encoder_pooling3'),
+        #         keras.layers.Conv1D(filters=5, kernel_size=45, strides=5, activation='relu', name='Encoder_Convo4'),
+        #         keras.layers.MaxPooling1D(pool_size=2, name='Encoder_pooling4'),
+        #         keras.layers.Flatten(),
+        #     ]),
+        #     name="encoder_convolution",
+        # )(encoder_interaction)
 
         # encoder_features = convoluting_encoded_data(encoder_interaction)
 
         # Concatenate flattened features with encoder_capacity_delta
         encoder_combined_features = keras.layers.Concatenate(name="encoder_feature_concat")(
-            [encoder_features, encoder_capacity_delta]
+            [encoder_features, encoder_capacity_delta, encoder_cumulative_time_spent, encoder_cumulative_Ah_throughput]
         )
 
         # ============================
@@ -544,6 +612,16 @@ class Model:
             shape=(max_decoder_timesteps, max_transitions), name="decoder_time_spent"
         )
 
+        # Input for decoder cumulative time spent
+        decoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_decoder_timesteps, 1), name="decoder_cumulative_time_spent"
+        )
+
+        # Input for decoder cumulative Ah throughput
+        decoder_cumulative_Ah_throughput = keras.layers.Input(
+            shape=(max_decoder_timesteps, 1), name="decoder_cumulative_Ah_throughput"
+        )
+
         decoder_bin_embedding = timebin_encoding_layer(decoder_bin_indices)
 
         # Reshape time spent input to match embedding dimensions
@@ -560,28 +638,43 @@ class Model:
         )
 
         # # Process each timestep with Convolutional Layers
-        decoder_features = keras.layers.TimeDistributed(
-            keras.Sequential([
-                keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Decoder_Convo1'),
-                keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='relu', name='Decoder_Convo2'),
-                keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='relu', name='Decoder_Convo3'),
-                keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='relu', name='Decoder_Convo4'),
-                keras.layers.Flatten(),
-            ]),
-            name="decoder_convolution",
-        )(decoder_interaction)
+        # decoder_features = keras.layers.TimeDistributed(
+        #     keras.Sequential([
+        #         keras.layers.Conv1D(filters=2, kernel_size=15, strides=4, activation='relu', name='Decoder_Convo1'),
+        #         keras.layers.Conv1D(filters=4, kernel_size=25, strides=4, activation='relu', name='Decoder_Convo2'),
+        #         keras.layers.Conv1D(filters=6, kernel_size=35, strides=4, activation='relu', name='Decoder_Convo3'),
+        #         keras.layers.Conv1D(filters=8, kernel_size=45, strides=5, activation='relu', name='Decoder_Convo4'),
+        #         keras.layers.Flatten(),
+        #     ]),
+        #     name="decoder_convolution",
+        # )(decoder_interaction)
 
-        # decoder_features = convoluting_encoded_data(decoder_interaction)
+        decoder_conv_stack = keras.Sequential([
+            conv_block(4, 15, 2, 4, name="dec_b1"),  # wider filters: 16 → 32 → 64 → 128 is common
+            conv_block(8, 25, 2, 4, name="dec_b2"),
+            conv_block(8, 35, 2, 2, name="dec_b3"),
+            conv_block(16, 12, 2, 2, name="dec_b4"),
+            keras.layers.Flatten(name="Dec_flat")
+        ], name="decoder_conv_stack")
+
+        decoder_features = keras.layers.TimeDistributed(
+            decoder_conv_stack, name="decoder_convolution"
+        )(decoder_interaction)  # shape → (batch, dec_steps, 128)
+
 
         # ============================
         # 4. Decoder LSTM Layer with Initial States
         # ============================
 
+        decoderr_combined_features = keras.layers.Concatenate(name="decoder_feature_concat")(
+            [decoder_features, decoder_cumulative_time_spent, decoder_cumulative_Ah_throughput]
+        )
+
         decoder_lstm = keras.layers.LSTM(
             units=latent_state_neuron, return_sequences=True, return_state=False, name="decoder_lstm"
         )
         decoder_outputs = decoder_lstm(
-            decoder_features, initial_state=[state_h, state_c]
+            decoderr_combined_features, initial_state=[state_h, state_c]
         )
 
         # ============================
@@ -601,8 +694,12 @@ class Model:
                 encoder_bin_indices,
                 encoder_time_spent,
                 encoder_capacity_delta,
+                encoder_cumulative_time_spent,
+                encoder_cumulative_Ah_throughput,
                 decoder_bin_indices,
                 decoder_time_spent,
+                decoder_cumulative_time_spent,
+                decoder_cumulative_Ah_throughput
             ],
             outputs=deltaQ_pred,
         )
@@ -614,6 +711,9 @@ class Model:
             metrics=["mean_absolute_error", "mean_squared_error"],
         )
 
+        # Print model summary
+        print(model.summary())
+
         # Save model summary
         model_summary_path = os.path.join(self.model_dir, "model_summary.txt")
         with open(model_summary_path, "w") as f:
@@ -621,6 +721,7 @@ class Model:
 
         self.model = model
         return self.model
+
 
 
     def build_sequence_to_sequence_model_with_previous_dq(self,
@@ -1317,6 +1418,10 @@ class Model:
 
             enc_time_spent = data_split['encoder_inputs']['timebins']
             dec_time_spent = data_split['decoder_inputs']['timebins']
+            enc_cumulative_time_spent = data_split['encoder_inputs']['cumulative_time']
+            dec_cumulative_time_spent = data_split['decoder_inputs']['cumulative_time']
+            enc_Ah_throughput = data_split['encoder_inputs']['cumulative_Ah']
+            dec_Ah_throughput = data_split['decoder_inputs']['cumulative_Ah']
 
             # converting to list of lists
             enc_time_spent = [[list(each_intermittent_cycle.values())
@@ -1325,6 +1430,7 @@ class Model:
             dec_time_spent = [[list(each_intermittent_cycle.values())
                                for each_intermittent_cycle in each_sequence]
                               for each_sequence in dec_time_spent]
+
 
             # Now pad along the timesteps dimension
             enc_padding_type = 'pre'
@@ -1338,9 +1444,22 @@ class Model:
             enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
                                                      maxlen=max_encoder_timesteps, padding=enc_padding_type,
                                                      value=0.0, dtype='float32')
+            enc_cumulative_time_spent_padded = pad_sequences(enc_cumulative_time_spent, maxlen=max_encoder_timesteps,
+                                                             padding=enc_padding_type,
+                                                             value=0.0, dtype='float32')
+            enc_cumulative_Ah_throughput_padded = pad_sequences(enc_Ah_throughput, maxlen=max_encoder_timesteps,
+                                                                padding=enc_padding_type,
+                                                                value=0.0, dtype='float32')
+
             # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
             enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
             enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float32')
+
+            enc_cumulative_time_spent_padded = np.expand_dims(enc_cumulative_time_spent_padded, axis=-1)
+            enc_cumulative_time_spent_padded = enc_cumulative_time_spent_padded.astype('float32')
+
+            enc_cumulative_Ah_throughput_padded = np.expand_dims(enc_cumulative_Ah_throughput_padded, axis=-1)
+            enc_cumulative_Ah_throughput_padded = enc_cumulative_Ah_throughput_padded.astype('float32')
 
             dec_padding_type = 'post'
 
@@ -1351,15 +1470,33 @@ class Model:
             dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
                                                maxlen=max_decoder_timesteps, padding=dec_padding_type,
                                                value=0.0, dtype='float32')
+            dec_cumulative_time_spent_padded = pad_sequences(dec_cumulative_time_spent, maxlen=max_decoder_timesteps,
+                                                                padding=dec_padding_type,
+                                                                value=0.0, dtype='float32')
+            dec_cumulative_Ah_throughput_padded = pad_sequences(dec_Ah_throughput, maxlen=max_decoder_timesteps,
+                                                                padding=dec_padding_type,
+                                                                value=0.0, dtype='float32')
+
 
             # Reshape targets to (batch_size, max_decoder_timesteps, 1)
             dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
             dec_targets_padded = dec_targets_padded.astype('float32')
 
+            # Reshape cumulative_time_spent_padded to (batch_size, max_decoder_timesteps, 1)
+            dec_cumulative_time_spent_padded = np.expand_dims(dec_cumulative_time_spent_padded, axis=-1)
+            dec_cumulative_time_spent_padded = dec_cumulative_time_spent_padded.astype('float32')
+
+            dec_cumulative_Ah_throughput_padded = np.expand_dims(dec_cumulative_Ah_throughput_padded, axis=-1)
+            dec_cumulative_Ah_throughput_padded = dec_cumulative_Ah_throughput_padded.astype('float32')
+
             inputs = {
                 'encoder_time_spent': tf.convert_to_tensor(enc_time_spent_padded),
                 'encoder_capacity_delta': tf.convert_to_tensor(enc_capacity_diff_padded),
-                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded)
+                'encoder_cumulative_time_spent': tf.convert_to_tensor(enc_cumulative_time_spent_padded),
+                'encoder_cumulative_Ah_throughput': tf.convert_to_tensor(enc_cumulative_Ah_throughput_padded),
+                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded),
+                'decoder_cumulative_time_spent': tf.convert_to_tensor(dec_cumulative_time_spent_padded),
+                'decoder_cumulative_Ah_throughput': tf.convert_to_tensor(dec_cumulative_Ah_throughput_padded)
             }
 
             targets = tf.convert_to_tensor(dec_targets_padded, dtype='float32')
@@ -1376,11 +1513,15 @@ class Model:
             # Encoder
             enc_bin_indices = self.pad_transitions(data_split['encoder_inputs']['bin_indices'], max_transitions)
             enc_time_spent = self.pad_transitions(data_split['encoder_inputs']['timebins'], max_transitions)
+            enc_cumulative_time_spent = data_split['encoder_inputs']['cumulative_time']
+            enc_cumulative_Ah_throughput = data_split['encoder_inputs']['cumulative_Ah']
             # enc_capacity_diff = self.pad_transitions(data_split['encoder_inputs']['capacity_difference'], max_transitions)
 
             # Decoder
             dec_bin_indices = self.pad_transitions(data_split['decoder_inputs']['bin_indices'], max_transitions)
             dec_time_spent = self.pad_transitions(data_split['decoder_inputs']['timebins'], max_transitions)
+            dec_cumulative_time_spent = data_split['decoder_inputs']['cumulative_time']
+            dec_cumulative_Ah_throughput = data_split['decoder_inputs']['cumulative_Ah']
             # dec_targets = self.pad_transitions(data_split['decoder_outputs']['capacity_difference'], max_transitions)
 
             # Now pad along the timesteps dimension
@@ -1395,9 +1536,23 @@ class Model:
             enc_capacity_diff_padded = pad_sequences(data_split['encoder_inputs']['capacity_difference'],
                                                      maxlen=max_encoder_timesteps, padding=enc_padding_type,
                                                      value=0.0, dtype='float32')
+            enc_cumulative_time_spent_padded = pad_sequences(enc_cumulative_time_spent, maxlen=max_encoder_timesteps,
+                                                                padding=enc_padding_type,
+                                                                value=0.0, dtype='float32')
+            enc_cumulative_Ah_throughput_padded = pad_sequences(enc_cumulative_Ah_throughput, maxlen=max_encoder_timesteps,
+                                                                padding=enc_padding_type,
+                                                                value=0.0, dtype='float32')
+
+
             # reshape encoder_capacity_diff_padded to (batch_size, max_encoder_timesteps, 1)
             enc_capacity_diff_padded = np.expand_dims(enc_capacity_diff_padded, axis=-1)
             enc_capacity_diff_padded = enc_capacity_diff_padded.astype('float32')
+
+            enc_cumulative_time_spent_padded = np.expand_dims(enc_cumulative_time_spent_padded, axis=-1)
+            enc_cumulative_time_spent_padded = enc_cumulative_time_spent_padded.astype('float32')
+
+            enc_cumulative_Ah_throughput_padded = np.expand_dims(enc_cumulative_Ah_throughput_padded, axis=-1)
+            enc_cumulative_Ah_throughput_padded = enc_cumulative_Ah_throughput_padded.astype('float32')
 
             dec_padding_type = 'post'
 
@@ -1408,17 +1563,35 @@ class Model:
             dec_targets_padded = pad_sequences(data_split['decoder_outputs']['capacity_difference'],
                                                maxlen=max_decoder_timesteps, padding=dec_padding_type,
                                                value=0.0, dtype='float32')
+            dec_cumulative_time_spent_padded = pad_sequences(dec_cumulative_time_spent, maxlen=max_decoder_timesteps,
+                                                                padding=dec_padding_type,
+                                                                value=0.0, dtype='float32')
+            dec_cumulative_Ah_throughput_padded = pad_sequences(dec_cumulative_Ah_throughput, maxlen=max_decoder_timesteps,
+                                                                padding=dec_padding_type,
+                                                                value=0.0, dtype='float32')
 
             # Reshape targets to (batch_size, max_decoder_timesteps, 1)
             dec_targets_padded = np.expand_dims(dec_targets_padded, axis=-1)
             dec_targets_padded = dec_targets_padded.astype('float32')
 
+            # Reshape cumulative_time_spent_padded to (batch_size, max_decoder_timesteps, 1)
+            dec_cumulative_time_spent_padded = np.expand_dims(dec_cumulative_time_spent_padded, axis=-1)
+            dec_cumulative_time_spent_padded = dec_cumulative_time_spent_padded.astype('float32')
+
+            # Reshape cumulative_Ah_throughput_padded to (batch_size, max_decoder_timesteps, 1)
+            dec_cumulative_Ah_throughput_padded = np.expand_dims(dec_cumulative_Ah_throughput_padded, axis=-1)
+            dec_cumulative_Ah_throughput_padded = dec_cumulative_Ah_throughput_padded.astype('float32')
+
             inputs = {
                 'encoder_bin_indices': tf.convert_to_tensor(enc_bin_indices_padded),
                 'encoder_time_spent': tf.convert_to_tensor(enc_time_spent_padded),
                 'encoder_capacity_delta': tf.convert_to_tensor(enc_capacity_diff_padded),
+                'encoder_cumulative_time_spent': tf.convert_to_tensor(enc_cumulative_time_spent_padded),
+                'encoder_cumulative_Ah_throughput': tf.convert_to_tensor(enc_cumulative_Ah_throughput_padded),
                 'decoder_bin_indices': tf.convert_to_tensor(dec_bin_indices_padded),
-                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded)
+                'decoder_time_spent': tf.convert_to_tensor(dec_time_spent_padded),
+                'decoder_cumulative_time_spent': tf.convert_to_tensor(dec_cumulative_time_spent_padded),
+                'decoder_cumulative_Ah_throughput': tf.convert_to_tensor(dec_cumulative_Ah_throughput_padded)
             }
 
             targets = tf.convert_to_tensor(dec_targets_padded, dtype='float32')
@@ -2076,3 +2249,161 @@ class Model:
     #     trained_model_path = os.path.join(exp_path, 'checkpoints', 'model.keras')
     #     # self.model = keras.models.load_model(trained_model_path)
     #     self.model.load_weights(trained_model_path)
+
+    def ConvToFixedP(self, filters, kernel_sizes, strides, p, name=None):
+        """
+        Sequential block that:
+          1) applies Conv1D stack with 'same' padding,
+          2) adaptive pools to length p,
+          3) transposes to (batch, channels, p).
+        """
+        seq = keras.Sequential(name=name)
+        # 1) convolutional feature extraction (same padding to avoid negative dims)
+        for i, (f, k, s) in enumerate(zip(filters, kernel_sizes, strides), 1):
+            seq.add(keras.layers.Conv1D(
+                filters=f,
+                kernel_size=k,
+                strides=s,
+                padding='same',
+                activation="relu",
+                name=f"{name}_conv{i}"
+            ))
+
+        # 2) adaptive pooling to p segments
+        def adaptive_pool(x):
+            length = tf.shape(x)[1]
+            # ensure at least p frames
+            frame_len = tf.maximum(length // p, 1)
+            total = frame_len * p
+            x_trunc = x[:, :total, :]  # truncate to divisible length
+            x_resh = tf.reshape(x_trunc, [tf.shape(x)[0], p, frame_len, tf.shape(x)[2]])
+            pooled = tf.reduce_mean(x_resh, axis=2)  # (batch, p, channels)
+            return tf.transpose(pooled, perm=[0, 2, 1])  # (batch, channels, p)
+
+
+        seq.add(keras.layers.Lambda(adaptive_pool, name=f"{name}_adaptive_pool"))
+
+        # 3) flatten the last two dims into a single feature vector
+        seq.add(keras.layers.Flatten(name=f"{name}_flatten"))
+
+        return seq
+
+    def build_sequence_to_sequence_model_with_matrix_data_auto(self,
+                                                          max_encoder_timesteps: int,
+                                                          max_decoder_timesteps: int,
+                                                          max_transitions: int,
+                                                          bins: int):
+        """
+        Build an Encoder-Decoder Seq2Seq model with variable Conv1D kernels/strides
+        and guaranteed output shape (..., 8, p).
+        """
+        # Config
+        embedding_dim = self.config['model_config']['embedding_size']
+        type_of_loss = self.config['model_config']['type_of_loss']
+        learning_rate = self.config['model_specifications']['learning_rate']
+        latent_state_neuron = self.config['model_config']['latent_state_neuron']
+
+        # Convolution parameters
+        conv_filters = [2, 4, 6, 8]  # last must be 8
+        conv_kernels = [15, 25, 35, 45]
+        conv_strides = [4, 4, 4, 5]
+        p = 3  # desired fixed temporal length
+
+        # 1. Encoder Inputs
+        encoder_bin_indices = keras.layers.Input(
+            shape=(max_encoder_timesteps, max_transitions), name="encoder_bin_indices"
+        )
+        encoder_time_spent = keras.layers.Input(
+            shape=(max_encoder_timesteps, max_transitions), name="encoder_time_spent"
+        )
+        encoder_capacity_delta = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_capacity_delta"
+        )
+        encoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_encoder_timesteps, 1), name="encoder_cumulative_time_spent"
+        )
+
+        # Embedding + interaction
+        timebin_encoding_layer = keras.layers.TimeDistributed(
+            keras.layers.Embedding(input_dim=bins + 1, output_dim=embedding_dim, mask_zero=True),
+            name="encoder_embedding"
+        )
+        enc_bin_emb = timebin_encoding_layer(encoder_bin_indices)
+        enc_time_exp = keras.layers.Reshape((max_encoder_timesteps, max_transitions, 1))(encoder_time_spent)
+        encoder_interaction = keras.layers.Concatenate()([enc_bin_emb, enc_time_exp])
+
+        # Encoder convolution -> fixed (8, p)
+        encoder_convolver = keras.layers.TimeDistributed(
+            self.ConvToFixedP(conv_filters, conv_kernels, conv_strides, p, name="encoder_conv_block"),
+            name="encoder_convolution"
+        )
+
+        encoder_features = encoder_convolver(encoder_interaction)
+        # encoder_features.shape == (batch, max_encoder_timesteps, 8, p)
+
+        # Combine and LSTM encoder
+        encoder_combined = keras.layers.Concatenate(name="encoder_feature_concat")(
+            [encoder_features, encoder_capacity_delta, encoder_cumulative_time_spent]
+        )
+        encoder_lstm = keras.layers.LSTM(units=latent_state_neuron, return_state=True, name="encoder_lstm")
+        _, state_h, state_c = encoder_lstm(encoder_combined)
+
+        # 2. Decoder Inputs
+        decoder_bin_indices = keras.layers.Input(
+            shape=(max_decoder_timesteps, max_transitions), name="decoder_bin_indices"
+        )
+        decoder_time_spent = keras.layers.Input(
+            shape=(max_decoder_timesteps, max_transitions), name="decoder_time_spent"
+        )
+        decoder_cumulative_time_spent = keras.layers.Input(
+            shape=(max_decoder_timesteps, 1), name="decoder_cumulative_time_spent"
+        )
+
+        dec_bin_emb = timebin_encoding_layer(decoder_bin_indices)
+        dec_time_exp = keras.layers.Reshape((max_decoder_timesteps, max_transitions, 1))(decoder_time_spent)
+        decoder_interaction = keras.layers.Concatenate()([dec_bin_emb, dec_time_exp])
+
+        # Decoder convolution -> fixed (8, p)
+        decoder_convolver = keras.layers.TimeDistributed(
+            self.ConvToFixedP(conv_filters, conv_kernels, conv_strides, p, name="decoder_conv_block"),
+            name="decoder_convolution"
+        )
+        decoder_features = decoder_convolver(decoder_interaction)
+        # decoder_features.shape == (batch, max_decoder_timesteps, 8, p)
+
+
+        # LSTM decoder
+        decoder_combined = keras.layers.Concatenate(name="decoder_feature_concat")(
+            [decoder_features, decoder_cumulative_time_spent]
+        )
+        decoder_lstm = keras.layers.LSTM(
+            units=latent_state_neuron, return_sequences=True, name="decoder_lstm"
+        )
+        decoder_outputs = decoder_lstm(decoder_combined, initial_state=[state_h, state_c])
+
+        # Output
+        deltaQ_pred = keras.layers.TimeDistributed(
+            keras.layers.Dense(1), name="deltaQ_output"
+        )(decoder_outputs)
+
+        model = keras.models.Model(
+            inputs=[
+                encoder_bin_indices, encoder_time_spent, encoder_capacity_delta, encoder_cumulative_time_spent,
+                decoder_bin_indices, decoder_time_spent, decoder_cumulative_time_spent
+            ],
+            outputs=deltaQ_pred
+        )
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
+            loss=type_of_loss,
+            metrics=["mean_absolute_error", "mean_squared_error"]
+        )
+
+        print(model.summary(
+            line_length=120,
+            expand_nested=True,
+            show_trainable=True
+        ))
+
+        self.model = model
+        return model

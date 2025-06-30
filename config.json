@@ -1,7 +1,9 @@
 {
-    "experiment_name": "seq_to_seq_m_100E_all_freq10hour_3part_noscaling_001l_B16_MAE_343bins",
+    "experiment_name": "matrix_all_E1000_0001_matrix_e8_GT40_MSE_500E_all_freq10hour_3part_noscaling_001l_B4_MAE_343bins_current_changed",
     "scalar_vector_exp_flag": "matrix",
     "sequence_to_sequence": true,
+    "experiment_seed": 60,
+    "cell_batches": ["batch1", "batch2", "batch3", "b9"],
     "paths": {
         "trained_model": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results/updated_TCN_all_data_stride_less_relu_time_V5000E_freq10hour_padding_MV_005l_B128_30T",
         "data": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/all_data",
@@ -10,7 +12,7 @@
         "result": "/Users/tkddesai/surfdrive/Main drive/Data/Severson_and_Attia/Results"
     },
     "cells": {
-        "cells_omit": ["b2c3", "b2c11", "b2c18", "b1c0", "b1c1", "b1c4", "b1c37", "b1c18"]
+        "cells_omit": ["b2c1","b2c3", "b2c11", "b2c18", "b2c28", "b1c0", "b1c1", "b1c4", "b1c37", "b1c18"]
     },
     "nominal_capacity": 1.1,
     "signals": {
@@ -41,10 +43,10 @@
     },
     "data": {
         "ground_truth_cycle_validity": {
-            "min_capacity_change": 0.01,
+            "min_capacity_change": 0.001,
             "max_capacity_change": 0.4
         },
-        "ground_truth_cycle_frequency": 10,
+        "ground_truth_cycle_frequency": 30,
         "batches_and_cycle_to_skip": {"batch1": 0, "batch9":0}
     },
     "model_config": {
@@ -58,11 +60,11 @@
         "latent_state_neuron": 8,
         "embedding_size": 8,
         "monitor": "val_loss",
-        "type_of_loss": "mean_absolute_error"
+        "type_of_loss": "mean_squared_error"
     },
     "model_specifications": {
-        "epochs": 5,
-        "batch_size": 8,
+        "epochs": 10,
+        "batch_size": 4,
         "test_train_cells_ratio": 0.3,
         "val_train_cycles_ratio": 0.2,
         "max_no_of_sequences_per_cell": 3,
@@ -71,7 +73,7 @@
         "second_stage_encoder_max_input_seq": 200,
         "skipping_seq": 1,
         "early_stopping_patience": 100,
-        "learning_rate": 0.001,
+        "learning_rate": 0.0001,
         "decay_steps": 10,
         "decay_rate": 1.0,
         "weights_logging_freq_epochs": 20,
@@ -94,20 +96,19 @@
         ],
         "current_bins": [
             [-4, -2],
-            [-2, 0],
-            [0, 2],
-            [2, 6]
+            [-2, -0.1],
+            [-0.1, 0.1],
+            [0.1, 6],
+            [6, 8]
         ],
         "temperature_bins": [
-            [25, 30],
-            [30, 35],
-            [35, 40]
+            [10, 40]
         ]
     },
     "encoder_decoder_ratio_map": {
         "1": [0.5],
-        "2": [0.2, 0.8],
-        "3": [0.2, 0.5, 0.8],
+        "2": [0.3, 0.8],
+        "3": [0.3, 0.5, 0.8],
         "4": [0.1, 0.3, 0.6, 0.9],
         "5": [0.2, 0.3, 0.5, 0.7, 0.9]
     }
